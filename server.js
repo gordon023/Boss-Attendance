@@ -87,6 +87,7 @@ function sendUpdate() {
 
 // ─── Upload + OCR (English + Chinese, merged names) ───────────
 // ─── Upload + OCR (English + Chinese, smarter vertical detection) ───────────
+// ─── Upload + OCR (English + Chinese, vertical box detection) ───────────
 const upload = multer({ dest: "uploads/" });
 
 app.post("/upload", upload.single("image"), async (req, res) => {
@@ -97,51 +98,41 @@ app.post("/upload", upload.single("image"), async (req, res) => {
     uploadedImagePath = imagePath;
     console.log("🖼️ OCR received:", imagePath);
 
-    // Respond immediately so UI shows "processing"
+    // respond immediately
     res.json({ status: "processing", imagePath: `/uploads/${path.basename(imagePath)}` });
 
-    // Perform OCR asynchronously
+    // Run OCR in "sparse text" mode (PSM 11) for box-like rows
     Tesseract.recognize(imagePath, "chi_sim+eng", {
-      tessedit_pageseg_mode: 6, // treat as block of text
+      tessedit_pageseg_mode: 11, // detect many small text boxes
       logger: (m) => console.log(m.status, m.progress),
     })
       .then((result) => {
         const raw = result.data.text || "";
-        let cleanText = raw.replace(/\s+/g, "").trim();
 
-        // --- Smart segmentation rules ---
-        // Split between Chinese ↔ English transitions
-        cleanText = cleanText
-          .replace(/([A-Za-z]+)(?=[\u4e00-\u9fa5])/g, "$1|")
-          .replace(/([\u4e00-\u9fa5]+)(?=[A-Za-z])/g, "$1|");
+        // Split on newlines and remove junk
+        const lines = raw
+          .split(/\r?\n/)
+          .map((l) => l.replace(/\s+/g, "").trim())
+          .filter((l) => l.length > 0 && !/^[xX\d\W]+$/.test(l));
 
-        // Split between multiple Chinese clusters stuck together (e.g., 轻云清源)
-        cleanText = cleanText.replace(/([\u4e00-\u9fa5]{2,})(?=[\u4e00-\u9fa5]{2,})/g, "$1|");
-
-        // Break very long sequences of English letters/numbers (>12 chars)
-        cleanText = cleanText.replace(/([A-Za-z0-9]{12,})/g, "$1|");
-
-        // Split + filter junk
-        const pieces = cleanText
-          .split("|")
-          .map((p) => p.trim())
-          .filter((p) => p.length > 1 && !/^[xX\d\W]+$/.test(p));
-
-        // Merge short fragments (like single Chinese + short English parts)
-        const merged = [];
-        for (let i = 0; i < pieces.length; i++) {
-          const cur = pieces[i];
-          const next = pieces[i + 1];
-          if (cur.length < 2 && next && next.length < 3) {
-            merged.push(cur + next);
-            i++;
-          } else merged.push(cur);
+        // Further break any long merged line like "JinshiNeslein" by
+        // transition between lowercase→uppercase or Chinese↔English
+        const names = [];
+        for (let line of lines) {
+          line = line
+            .replace(/([a-z])([A-Z])/g, "$1|$2")
+            .replace(/([A-Za-z]+)(?=[\u4e00-\u9fa5])/g, "$1|")
+            .replace(/([\u4e00-\u9fa5]+)(?=[A-Za-z])/g, "$1|");
+          for (const n of line.split("|")) {
+            const name = n.trim();
+            if (name.length > 1 && !/^[xX\d\W]+$/.test(name)) names.push(name);
+          }
         }
 
-        console.log("✅ OCR Detected:", merged);
+        console.log("✅ OCR vertical names:", names);
 
         io.emit("ocr-result", {
-          names: merged,
+          names,
           imagePath: `/uploads/${path.basename(imagePath)}`,
         });
       })
