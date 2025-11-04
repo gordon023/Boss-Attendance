@@ -18,21 +18,23 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 app.use(cors());
 app.use(express.static("public"));
+app.use("/uploads", express.static("uploads"));
 
+// ─── Setup ───
 const DATA_FILE = "./data/attendance.json";
 await fs.ensureFile(DATA_FILE);
 if (!(await fs.readFile(DATA_FILE, "utf8"))) await fs.writeFile(DATA_FILE, "[]");
 
-// ─── Discord Bot ────────────────────────────────
+// ─── Discord Bot ───
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
 });
 
 let voiceMembers = new Map();
 let pastAttendance = [];
-let uploadedImagePath = null;
+let uploadedImages = []; // keep list of uploaded image file paths
 
-// Load saved data
+// Load old attendance
 fs.readJson(DATA_FILE)
   .then((data) => (pastAttendance = data))
   .catch(() => (pastAttendance = []));
@@ -42,11 +44,11 @@ client.once("ready", () => {
   io.emit("bot-status", { connected: true, name: client.user.tag });
 });
 
-// ─── Voice Channel Tracking ─────────────────────
+// ─── Voice Channel Tracking ───
 client.on("voiceStateUpdate", async (oldState, newState) => {
   const channelId = process.env.DISCORD_VOICE_CHANNEL_ID;
 
-  // Member joined
+  // joined
   if (newState.channelId === channelId && oldState.channelId !== channelId) {
     const member = newState.member;
     const nickname = member.displayName || member.user.username;
@@ -58,7 +60,7 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
     });
   }
 
-  // Member left
+  // left
   if (oldState.channelId === channelId && newState.channelId !== channelId) {
     const member = voiceMembers.get(oldState.id);
     if (member) {
@@ -78,14 +80,10 @@ function sendUpdate() {
     ...m,
     duration: Math.round((Date.now() - m.joinTime) / 1000),
   }));
-
-  io.emit("update-attendance", {
-    active,
-    past: pastAttendance.slice(-20),
-  });
+  io.emit("update-attendance", { active, past: pastAttendance.slice(-20) });
 }
 
-// ─── Upload + OCR (English + Chinese, async worker) ───────────
+// ─── Upload + OCR ───
 const upload = multer({ dest: "uploads/" });
 
 app.post("/upload", upload.single("image"), async (req, res) => {
@@ -93,43 +91,35 @@ app.post("/upload", upload.single("image"), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
     const imagePath = path.resolve(req.file.path);
-    uploadedImagePath = imagePath;
-    console.log("🖼️ OCR received:", imagePath);
+    uploadedImages.push(imagePath);
+    console.log("🖼️ OCR processing:", imagePath);
 
-    // Respond immediately so browser doesn't hang
-    res.json({ status: "processing", imagePath: `/uploads/${path.basename(imagePath)}` });
+    const result = await Tesseract.recognize(imagePath, "eng+chi_sim", {
+      logger: (m) => {
+        if (m.status === "recognizing text") console.log(`Progress: ${(m.progress * 100).toFixed(1)}%`);
+      },
+    });
 
-    // Perform OCR asynchronously and emit results to client
-    Tesseract.recognize(imagePath, "eng+chi_sim", {
-      logger: (m) => console.log(m.status, m.progress),
-    })
-      .then((result) => {
-        const text = result.data.text || "";
-        const lines = text
-          .split("\n")
-          .map((l) => l.trim())
-          .filter((l) => l.length > 0);
+    const text = result.data.text;
+    const lines = text
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
 
-        console.log("✅ OCR detected:", lines);
-        io.emit("ocr-result", {
-          names: lines,
-          imagePath: `/uploads/${path.basename(imagePath)}`,
-        });
-      })
-      .catch((err) => {
-        console.error("❌ OCR error:", err);
-        io.emit("ocr-result", { error: "OCR failed." });
-      });
+    console.log("✅ OCR detected:", lines);
+
+    // Emit result to front-end immediately
+    io.emit("ocr-result", { names: lines, imagePath: `/uploads/${path.basename(imagePath)}` });
+
+    res.json({ names: lines, imagePath: `/uploads/${path.basename(imagePath)}` });
   } catch (err) {
-    console.error("❌ Upload error:", err);
-    res.status(500).json({ error: "Upload failed" });
+    console.error("❌ OCR Error:", err);
+    io.emit("ocr-result", { error: true });
+    res.status(500).json({ error: "OCR failed" });
   }
 });
 
-// Serve uploaded images
-app.use("/uploads", express.static("uploads"));
-
-// ─── Push to Discord ────────────────────────────
+// ─── Push to Discord ───
 app.get("/push-discord", async (req, res) => {
   const webhook = process.env.DISCORD_WEBHOOK_URL;
   const boss = req.query.boss || "Unknown Boss";
@@ -147,38 +137,29 @@ app.get("/push-discord", async (req, res) => {
     })
     .join("\n");
 
-  const content = `🎧 **Boss Attendance Report**\n**Boss:** ${boss}\n-----------------\n${report || "_No active members detected._"}`;
-
-  const body = uploadedImagePath
-    ? {
-        content,
-        embeds: [
-          {
-            title: "Attendance Image",
-            image: { url: `attachment://${path.basename(uploadedImagePath)}` },
-          },
-        ],
-      }
-    : { content };
+  const content =
+    `🎧 **Boss Attendance Report**\n` +
+    `**Boss:** ${boss}\n-----------------\n` +
+    `${report || "_No active members detected._"}`;
 
   const formData = new FormData();
-  formData.append("payload_json", JSON.stringify(body));
+  const body = { content };
 
-  if (uploadedImagePath) {
-    const buffer = await fs.readFile(uploadedImagePath);
-    formData.append("files[0]", buffer, path.basename(uploadedImagePath));
-  }
-
-  await fetch(webhook, {
-    method: "POST",
-    body: formData,
+  // attach all uploaded images
+  uploadedImages.forEach((imgPath, i) => {
+    formData.append(`files[${i}]`, fs.createReadStream(imgPath), path.basename(imgPath));
   });
 
+  formData.append("payload_json", JSON.stringify(body));
+
+  await fetch(webhook, { method: "POST", body: formData });
   console.log("✅ Attendance pushed to Discord");
+
+  uploadedImages = []; // reset after push
   res.send("ok");
 });
 
-// ─── Auto-sync active members on startup ────────
+// ─── Auto-sync on startup ───
 client.on("ready", async () => {
   const guild = await client.guilds.fetch(process.env.DISCORD_GUILD_ID);
   const channel = await guild.channels.fetch(process.env.DISCORD_VOICE_CHANNEL_ID);
