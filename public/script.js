@@ -1,29 +1,48 @@
 const socket = io();
-const activeBody = document.querySelector("#activeTable tbody");
-const pastBody = document.querySelector("#pastTable tbody");
-const statusEl = document.getElementById("bot-status");
-
-socket.on("bot-status", (data) => {
-  statusEl.textContent = `🟢 Bot Connected as ${data.name}`;
-  statusEl.style.background = "#1a472a";
-});
+let activeData = [];
+let detected = [];
+let currentBoss = "Unknown";
 
 socket.on("update-attendance", (data) => {
+  activeData = data.active;
+  detected = data.detected || [];
+
+  const activeBody = document.getElementById("activeBody");
   activeBody.innerHTML = "";
-  data.active.forEach((m) => {
-    const row = `<tr><td>${m.name}</td><td>${m.duration}s</td></tr>`;
-    activeBody.innerHTML += row;
+  activeData.forEach(m => {
+    const mins = Math.floor(m.duration / 60);
+    const secs = m.duration % 60;
+    activeBody.innerHTML += `<tr><td>${m.name}</td><td>${mins}m ${secs}s</td></tr>`;
   });
 
-  pastBody.innerHTML = "";
-  data.past.forEach((m) => {
-    const row = `<tr><td>${m.name}</td><td>${m.duration}s</td></tr>`;
-    pastBody.innerHTML += row;
-  });
+  const detectedList = document.getElementById("detectedNames");
+  detectedList.innerHTML = detected.map(n => `<li>${n}</li>`).join("");
+
+  if (data.image) document.getElementById("preview").src = data.image;
 });
 
+document.getElementById("uploadForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const res = await fetch("/upload", { method: "POST", body: new FormData(form) });
+  const result = await res.json();
+  alert("✅ Image uploaded and processed!");
+};
+
+document.getElementById("transferBtn").onclick = () => {
+  const bossSelect = document.getElementById("bossSelect");
+  currentBoss = bossSelect.value;
+
+  const previewBody = document.getElementById("previewBody");
+  previewBody.innerHTML = activeData.map(m => {
+    const mins = Math.floor(m.duration / 60);
+    const secs = m.duration % 60;
+    const present = detected.includes(m.name) ? "Present" : "Absent";
+    return `<tr><td>${m.name}</td><td>${mins}m ${secs}s</td><td>${present}</td></tr>`;
+  }).join("");
+};
+
 document.getElementById("pushDiscord").onclick = async () => {
-  const boss = document.getElementById("bossSelect").value;
-  await fetch(`/push-discord?boss=${encodeURIComponent(boss)}`);
-  alert(`✅ Attendance for ${boss} pushed to Discord!`);
+  await fetch(`/push-discord?boss=${encodeURIComponent(currentBoss)}`);
+  alert(`✅ Attendance for ${currentBoss} pushed to Discord!`);
 };
