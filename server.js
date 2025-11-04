@@ -14,6 +14,7 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 app.use(cors());
 app.use(express.static("public"));
+app.use(express.json()); // ✅ Needed for POST from frontend
 
 const DATA_FILE = "./data/attendance.json";
 await fs.ensureFile(DATA_FILE);
@@ -85,41 +86,42 @@ function sendUpdate() {
   });
 }
 
-
-app.get("/push-discord", async (req, res) => {
+// ✅ Updated: Push only active VC members
+app.post("/push-discord", async (req, res) => {
   const webhook = process.env.DISCORD_WEBHOOK_URL;
-  const boss = req.query.boss || "Unknown Boss";
+  const boss = req.body.boss || "Unknown Boss";
 
-  const report = pastAttendance
-    .slice(-20)
-    .map((m) => {
-      const minutes = Math.floor(m.duration / 60);
-      const seconds = m.duration % 60;
-      return `${m.name} — ${minutes}m ${seconds}s — ${boss} — Present`;
-    })
-    .join("\n");
-
-  const message = {
-    content: `🎧 **Boss Attendance Report**\n**Boss:** ${boss}\n-----------------\n${
-      report || "_No attendance recorded yet._"
-    }`,
-  };
-
-  await fetch(webhook, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(message),
+  // Collect active members only
+  const activeMembers = Array.from(voiceMembers.values()).map((m) => {
+    const duration = Math.floor((Date.now() - m.joinTime) / 1000);
+    const minutes = Math.floor(duration / 60);
+    const seconds = duration % 60;
+    return `${m.name} + ${minutes}m ${seconds}s + ${boss} + Active`;
   });
 
-  // Keep data saved for persistence
-  await fs.writeJson(DATA_FILE, pastAttendance);
-  res.send("ok");
-});
+  const message = {
+    content:
+      `🎧 **Boss Attendance Report**\n**Boss:** ${boss}\n-----------------\n` +
+      (activeMembers.length > 0
+        ? activeMembers.join("\n")
+        : "_No one currently active in voice chat._"),
+  };
 
+  try {
+    await fetch(webhook, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(message),
+    });
+
+    res.send("ok");
+  } catch (err) {
+    console.error("❌ Failed to send Discord update:", err);
+    res.status(500).send("error");
+  }
+});
 
 client.login(process.env.DISCORD_BOT_TOKEN);
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () =>
-  console.log(`🌐 Server running on port ${PORT}`)
-);
+server.listen(PORT, () => console.log(`🌐 Server running on port ${PORT}`));
