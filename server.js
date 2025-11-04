@@ -1,120 +1,134 @@
 import express from "express";
 import http from "http";
 import { Server } from "socket.io";
+import cors from "cors";
+import fs from "fs-extra";
+import dotenv from "dotenv";
+import path from "path";
 import multer from "multer";
 import Tesseract from "tesseract.js";
-import fs from "fs-extra";
-import path from "path";
-import sharp from "sharp";
+import fetch from "node-fetch";
+import FormData from "form-data";
+import { Client, GatewayIntentBits } from "discord.js";
+
+dotenv.config();
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, { cors: { origin: "*" } });
+app.use(cors());
+app.use(express.static("public"));
 
+const DATA_FILE = "./data/attendance.json";
+await fs.ensureFile(DATA_FILE);
+if (!(await fs.readFile(DATA_FILE, "utf8"))) await fs.writeFile(DATA_FILE, "[]");
+
+// ─── Discord Bot ────────────────────────────────
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
+});
+
+let voiceMembers = new Map();
+let pastAttendance = [];
+let uploadedImagePath = null;
+global.lastDetectedNames = [];
+
+// Load saved data
+fs.readJson(DATA_FILE)
+  .then((data) => (pastAttendance = data))
+  .catch(() => (pastAttendance = []));
+
+client.once("ready", () => {
+  console.log(`✅ Logged in as ${client.user.tag}`);
+  io.emit("bot-status", { connected: true, name: client.user.tag });
+});
+
+// ─── Voice Channel Tracking ─────────────────────
+client.on("voiceStateUpdate", async (oldState, newState) => {
+  const channelId = process.env.DISCORD_VOICE_CHANNEL_ID;
+
+  // Member joined
+  if (newState.channelId === channelId && oldState.channelId !== channelId) {
+    const member = newState.member;
+    const nickname = member.displayName || member.user.username;
+
+    voiceMembers.set(newState.id, {
+      id: newState.id,
+      name: nickname,
+      joinTime: Date.now(),
+    });
+  }
+
+  // Member left
+  if (oldState.channelId === channelId && newState.channelId !== channelId) {
+    const member = voiceMembers.get(oldState.id);
+    if (member) {
+      member.leaveTime = Date.now();
+      member.duration = Math.round((member.leaveTime - member.joinTime) / 1000);
+      pastAttendance.push(member);
+      voiceMembers.delete(oldState.id);
+      await fs.writeJson(DATA_FILE, pastAttendance);
+    }
+  }
+
+  sendUpdate();
+});
+
+function sendUpdate() {
+  const active = Array.from(voiceMembers.values()).map((m) => ({
+    ...m,
+    duration: Math.round((Date.now() - m.joinTime) / 1000),
+  }));
+
+  io.emit("update-attendance", {
+    active,
+    past: pastAttendance.slice(-20),
+  });
+}
+
+// ─── Keep clients synced on connect ─────────────
+io.on("connection", (socket) => {
+  console.log("🖥️ Client connected");
+  sendUpdate();
+
+  if (uploadedImagePath) {
+    socket.emit("ocr-result", {
+      names: global.lastDetectedNames,
+      imagePath: `/uploads/${path.basename(uploadedImagePath)}`,
+    });
+  }
+});
+
+// ─── Upload + OCR (English + Chinese, async worker) ───────────
 const upload = multer({ dest: "uploads/" });
 
-app.use(express.static("public"));
-app.use("/uploads", express.static("uploads"));
-
 app.post("/upload", upload.single("image"), async (req, res) => {
-  const imagePath = req.file.path;
-
   try {
-    const processedPath = `${imagePath}-processed.png`;
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-    await sharp(imagePath)
-      .resize({ width: 1360, height: 768, fit: "inside" })
-      .normalize()
-      .toFile(processedPath);
+    const imagePath = path.resolve(req.file.path);
+    uploadedImagePath = imagePath;
+    console.log("🖼️ OCR received:", imagePath);
 
-    console.log("🟩 Processing image for OCR:", processedPath);
+    // Respond immediately so browser doesn't hang
+    res.json({ status: "processing", imagePath: `/uploads/${path.basename(imagePath)}` });
 
-    // -------------------------------
-    // OCR Processing Section
-    // -------------------------------
-    Tesseract.recognize(processedPath, "eng+chi_sim", {
+    // Perform OCR asynchronously and emit results to client
+    Tesseract.recognize(imagePath, "eng+chi_sim", {
       logger: (m) => console.log(m.status, m.progress),
     })
       .then((result) => {
-        const words = result.data.words || [];
-        if (!words.length) throw new Error("No text found");
+        // 🔹 Extract individual word boxes (names)
+        const boxes = result.data.words || [];
+        const detectedNames = boxes
+          .map((w) => w.text.trim())
+          .filter((w) => w.length > 0);
 
-        // Step 1. Filter valid words
-        const valid = words
-          .map((w) => ({
-            text: w.text.trim(),
-            x: w.bbox.x0,
-            y: w.bbox.y0,
-          }))
-          .filter(
-            (w) =>
-              w.text &&
-              w.text.length > 0 &&
-              !/^[^A-Za-z0-9\u4e00-\u9fa5]+$/.test(w.text) &&
-              w.text.length < 20
-          );
+        global.lastDetectedNames = detectedNames;
 
-        // Step 2. Cluster vertically by Y (row groups)
-        const rowGroups = [];
-        valid.forEach((word) => {
-          let row = rowGroups.find((r) => Math.abs(r.y - word.y) < 30);
-          if (!row) {
-            row = { y: word.y, words: [] };
-            rowGroups.push(row);
-          }
-          row.words.push(word);
-        });
-
-        // Step 3. Sort each row horizontally (x position)
-        rowGroups.forEach((r) => r.words.sort((a, b) => a.x - b.x));
-
-        // Step 4. Merge horizontally adjacent characters in each row
-        const horizontalMerged = rowGroups.map((r) =>
-          r.words.map((w) => w.text).join("")
-        );
-
-        // Step 5. Group columns (for multiple boxes)
-        const sortedRows = rowGroups.sort((a, b) => a.y - b.y);
-        const columns = [];
-        sortedRows.forEach((row) => {
-          const lastCol = columns[columns.length - 1];
-          if (!lastCol || Math.abs(row.y - lastCol[lastCol.length - 1].y) > 60) {
-            columns.push([row]);
-          } else {
-            lastCol.push(row);
-          }
-        });
-
-        // Step 6. Flatten names per column
-        const mergedNames = columns.flatMap((col) =>
-          col.map((r) => r.words.map((w) => w.text).join(""))
-        );
-
-        // Step 7. Combine Chinese + English names like 君王Axel or Aerokhart神
-        const finalNames = [];
-        mergedNames.forEach((name) => {
-          if (!name) return;
-          name = name.replace(/\s+/g, "");
-          name = name.replace(/([A-Za-z]+)(?=[\u4e00-\u9fa5])/g, "$1|");
-          name = name.replace(/([\u4e00-\u9fa5]+)(?=[A-Za-z])/g, "$1|");
-          const parts = name.split("|").map((p) => p.trim()).filter(Boolean);
-          finalNames.push(...parts);
-        });
-
-        // Step 8. Clean duplicates and meaningless fragments
-        const cleanNames = [
-          ...new Set(
-            finalNames.filter(
-              (n) =>
-                n.length > 1 &&
-                !/^(x+|[0-9]+|[^\u4e00-\u9fa5A-Za-z]+)$/i.test(n)
-            )
-          ),
-        ];
-
-        console.log("✅ Final grouped names:", cleanNames);
+        console.log("✅ OCR detected names:", detectedNames);
         io.emit("ocr-result", {
-          names: cleanNames,
+          names: detectedNames,
           imagePath: `/uploads/${path.basename(imagePath)}`,
         });
       })
@@ -122,18 +136,94 @@ app.post("/upload", upload.single("image"), async (req, res) => {
         console.error("❌ OCR error:", err);
         io.emit("ocr-result", { error: "OCR failed." });
       });
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error("❌ OCR processing failed:", error);
-    res.status(500).json({ error: "Failed to process image." });
+  } catch (err) {
+    console.error("❌ Upload error:", err);
+    res.status(500).json({ error: "Upload failed" });
   }
 });
 
-io.on("connection", (socket) => {
-  console.log("🟢 Client connected");
-  socket.on("disconnect", () => console.log("🔴 Client disconnected"));
+// Serve uploaded images
+app.use("/uploads", express.static("uploads"));
+
+// ─── Push to Discord ────────────────────────────
+app.get("/push-discord", async (req, res) => {
+  const webhook = process.env.DISCORD_WEBHOOK_URL;
+  const boss = req.query.boss || "Unknown Boss";
+
+  const active = Array.from(voiceMembers.values()).map((m) => ({
+    name: m.name,
+    duration: Math.round((Date.now() - m.joinTime) / 1000),
+  }));
+
+  // 🔹 Combine OCR names and active voice members
+  const ocrNames = global.lastDetectedNames || [];
+  const combinedList = ocrNames.map((ocrName) => {
+    const match = active.find(
+      (v) => v.name.toLowerCase() === ocrName.toLowerCase()
+    );
+    return {
+      imageName: ocrName,
+      discordName: match ? match.name : "-",
+      activeInDiscord: match ? "✅ Present" : "❌ Absent",
+      bossHunt: match ? "✅ Present" : "❌ Absent",
+    };
+  });
+
+  const combinedReport = combinedList
+    .map(
+      (c) =>
+        `${c.imageName} | ${c.discordName} | ${c.activeInDiscord} | ${c.bossHunt}`
+    )
+    .join("\n");
+
+  const content = `🎯 **Boss Attendance Report**\n-----------------\n${combinedReport}`;
+
+  const body = uploadedImagePath
+    ? {
+        content,
+        embeds: [
+          {
+            title: "Attendance Image",
+            image: { url: `attachment://${path.basename(uploadedImagePath)}` },
+          },
+        ],
+      }
+    : { content };
+
+  const formData = new FormData();
+  formData.append("payload_json", JSON.stringify(body));
+
+  if (uploadedImagePath) {
+    const buffer = await fs.readFile(uploadedImagePath);
+    formData.append("files[0]", buffer, path.basename(uploadedImagePath));
+  }
+
+  await fetch(webhook, {
+    method: "POST",
+    body: formData,
+  });
+
+  console.log("✅ Attendance pushed to Discord");
+  res.send("ok");
 });
 
+// ─── Auto-sync active members on startup ────────
+client.on("ready", async () => {
+  const guild = await client.guilds.fetch(process.env.DISCORD_GUILD_ID);
+  const channel = await guild.channels.fetch(process.env.DISCORD_VOICE_CHANNEL_ID);
+  if (channel && channel.isVoiceBased()) {
+    for (const [id, member] of channel.members) {
+      voiceMembers.set(id, {
+        id,
+        name: member.displayName || member.user.username,
+        joinTime: Date.now(),
+      });
+    }
+    sendUpdate();
+  }
+});
+
+client.login(process.env.DISCORD_BOT_TOKEN);
+
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+server.listen(PORT, () => console.log(`🌐 Server running on port ${PORT}`));
