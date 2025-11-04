@@ -85,7 +85,7 @@ function sendUpdate() {
   });
 }
 
-// ─── Upload + OCR (English + Chinese, merged names) ───────────
+// ─── Upload + OCR (English + Chinese smart segmentation) ───────────
 const upload = multer({ dest: "uploads/" });
 
 app.post("/upload", upload.single("image"), async (req, res) => {
@@ -106,7 +106,6 @@ app.post("/upload", upload.single("image"), async (req, res) => {
       .then((result) => {
         const raw = result.data.text || "";
 
-        // --- OCR cleanup ---
         const lines = raw
           .split("\n")
           .map((l) => l.replace(/\s+/g, "").trim())
@@ -118,37 +117,31 @@ app.post("/upload", upload.single("image"), async (req, res) => {
           names.push(l);
         }
 
-        // 🔧 Improved OCR logic: keep trailing Chinese (e.g. Aerokhart神), split only when Chinese comes first
+        // 🧩 Smart name segmentation (handles 清源, Aerokhart神, 君王Axel)
         const merged = [];
-        for (let i = 0; i < names.length; i++) {
-          let current = names[i];
-          const next = names[i + 1];
+        for (let l of names) {
+          // 1️⃣ Split when multiple Chinese names glued together (轻云清源 → 轻云|清源)
+          l = l.replace(/([\u4e00-\u9fa5]{2,})(?=[\u4e00-\u9fa5]{2,})/g, "$1|");
 
-          if (/[\u4e00-\u9fa5]/.test(current) && /[A-Za-z]/.test(current)) {
-            // Split only when Chinese precedes English (e.g. 清源Aerokhart → 清源 + Aerokhart)
-            const parts = current.split(/(?<=[\u4e00-\u9fa5])(?=[A-Za-z])/);
-            merged.push(...parts.filter(Boolean));
-            continue;
+          // 2️⃣ Split when multiple English glued (JinshiNeslein → Jinshi|Neslein)
+          l = l.replace(/([A-Za-z]{3,})(?=[A-Z][a-z]+)/g, "$1|");
+
+          // 3️⃣ Keep Chinese+English together if mixed (君王Axel stays, Aerokhart神 stays)
+          // So do NOT split Chinese↔English boundaries here intentionally.
+
+          // 4️⃣ Split only if line becomes very long (too many names stuck)
+          if (l.length > 20) {
+            l = l.replace(/([A-Za-z\u4e00-\u9fa5]{4,}?)(?=[A-Za-z\u4e00-\u9fa5]{4,})/g, "$1|");
           }
 
-          // Merge short + uppercase next (Lola + Kerps)
-          if (
-            next &&
-            current.length <= 4 &&
-            /^[A-Z]/.test(next) &&
-            !/[\u4e00-\u9fa5]/.test(current + next)
-          ) {
-            merged.push(current + next);
-            i++;
-            continue;
+          const parts = l.split("|").map((p) => p.trim()).filter(Boolean);
+
+          for (const p of parts) {
+            if (p.length > 1 && !/^x+$/i.test(p)) merged.push(p);
           }
-
-          if (/^(x+|[\d\W_]+)$/i.test(current)) continue;
-
-          merged.push(current);
         }
 
-        console.log("✅ OCR vertical names (split improved):", merged);
+        console.log("✅ OCR final parsed names:", merged);
 
         io.emit("ocr-result", {
           names: merged,
@@ -186,9 +179,7 @@ app.get("/push-discord", async (req, res) => {
     })
     .join("\n");
 
-  const content = `🎧 **Boss Attendance Report**\n**Boss:** ${boss}\n-----------------\n${
-    report || "_No active members detected._"
-  }`;
+  const content = `🎧 **Boss Attendance Report**\n**Boss:** ${boss}\n-----------------\n${report || "_No active members detected._"}`;
 
   const body = uploadedImagePath
     ? {
