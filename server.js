@@ -107,35 +107,44 @@ app.post("/upload", upload.single("image"), async (req, res) => {
       logger: (m) => console.log(m.status, m.progress),
     })
       .then((result) => {
-        const raw = result.data.text || "";
+  const raw = result.data.text || "";
 
-        // Split on newlines and remove junk
-        const lines = raw
-          .split(/\r?\n/)
-          .map((l) => l.replace(/\s+/g, "").trim())
-          .filter((l) => l.length > 0 && !/^[xX\d\W]+$/.test(l));
+  // Split and clean base lines
+  const lines = raw
+    .split(/\r?\n/)
+    .map((l) => l.replace(/\s+/g, "").trim())
+    .filter((l) => l.length > 0 && !/^[xX\d\W]+$/.test(l));
 
-        // Further break any long merged line like "JinshiNeslein" by
-        // transition between lowercase→uppercase or Chinese↔English
-        const names = [];
-        for (let line of lines) {
-          line = line
-            .replace(/([a-z])([A-Z])/g, "$1|$2")
-            .replace(/([A-Za-z]+)(?=[\u4e00-\u9fa5])/g, "$1|")
-            .replace(/([\u4e00-\u9fa5]+)(?=[A-Za-z])/g, "$1|");
-          for (const n of line.split("|")) {
-            const name = n.trim();
-            if (name.length > 1 && !/^[xX\d\W]+$/.test(name)) names.push(name);
-          }
-        }
+  const names = [];
 
-        console.log("✅ OCR vertical names:", names);
+  for (let line of lines) {
+    // Split by:
+    // - English↔Chinese boundary
+    // - Lower→Upper case boundary
+    // - Number→Letter boundary
+    // - Two+ capital letters followed by lowercase (e.g., CROZZBOWThalechoe)
+    line = line
+      .replace(/([A-Z]{2,})([A-Z][a-z])/g, "$1|$2")
+      .replace(/([a-z])([A-Z])/g, "$1|$2")
+      .replace(/([A-Za-z]+)(?=[\u4e00-\u9fa5])/g, "$1|")
+      .replace(/([\u4e00-\u9fa5]+)(?=[A-Za-z])/g, "$1|")
+      .replace(/([0-9])([A-Za-z])/g, "$1|$2")
+      .replace(/([A-Za-z])([0-9])/g, "$1|$2");
 
-        io.emit("ocr-result", {
-          names,
-          imagePath: `/uploads/${path.basename(imagePath)}`,
-        });
-      })
+    for (const n of line.split("|")) {
+      const name = n.trim();
+      if (name.length > 1 && !/^[xX\d\W]+$/.test(name)) names.push(name);
+    }
+  }
+
+  console.log("✅ OCR vertical names (split improved):", names);
+
+  io.emit("ocr-result", {
+    names,
+    imagePath: `/uploads/${path.basename(imagePath)}`,
+  });
+})
+
       .catch((err) => {
         console.error("❌ OCR error:", err);
         io.emit("ocr-result", { error: "OCR failed." });
