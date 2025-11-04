@@ -1,232 +1,87 @@
 import express from "express";
 import http from "http";
 import { Server } from "socket.io";
-import cors from "cors";
-import fs from "fs-extra";
-import dotenv from "dotenv";
-import path from "path";
 import multer from "multer";
 import Tesseract from "tesseract.js";
-import fetch from "node-fetch";
-import FormData from "form-data";
-import { Client, GatewayIntentBits } from "discord.js";
-
-dotenv.config();
+import fs from "fs";
+import path from "path";
+import sharp from "sharp";
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
-app.use(cors());
-app.use(express.static("public"));
+const io = new Server(server);
 
-const DATA_FILE = "./data/attendance.json";
-await fs.ensureFile(DATA_FILE);
-if (!(await fs.readFile(DATA_FILE, "utf8"))) await fs.writeFile(DATA_FILE, "[]");
-
-// ─── Discord Bot ────────────────────────────────
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
-});
-
-let voiceMembers = new Map();
-let pastAttendance = [];
-let uploadedImagePath = null;
-
-// Load saved data
-fs.readJson(DATA_FILE)
-  .then((data) => (pastAttendance = data))
-  .catch(() => (pastAttendance = []));
-
-client.once("ready", () => {
-  console.log(`✅ Logged in as ${client.user.tag}`);
-  io.emit("bot-status", { connected: true, name: client.user.tag });
-});
-
-// ─── Voice Channel Tracking ─────────────────────
-client.on("voiceStateUpdate", async (oldState, newState) => {
-  const channelId = process.env.DISCORD_VOICE_CHANNEL_ID;
-
-  // Member joined
-  if (newState.channelId === channelId && oldState.channelId !== channelId) {
-    const member = newState.member;
-    const nickname = member.displayName || member.user.username;
-
-    voiceMembers.set(newState.id, {
-      id: newState.id,
-      name: nickname,
-      joinTime: Date.now(),
-    });
-  }
-
-  // Member left
-  if (oldState.channelId === channelId && newState.channelId !== channelId) {
-    const member = voiceMembers.get(oldState.id);
-    if (member) {
-      member.leaveTime = Date.now();
-      member.duration = Math.round((member.leaveTime - member.joinTime) / 1000);
-      pastAttendance.push(member);
-      voiceMembers.delete(oldState.id);
-      await fs.writeJson(DATA_FILE, pastAttendance);
-    }
-  }
-
-  sendUpdate();
-});
-
-function sendUpdate() {
-  const active = Array.from(voiceMembers.values()).map((m) => ({
-    ...m,
-    duration: Math.round((Date.now() - m.joinTime) / 1000),
-  }));
-
-  io.emit("update-attendance", {
-    active,
-    past: pastAttendance.slice(-20),
-  });
-}
-
-// ─── Upload + OCR (English + Chinese smart segmentation) ───────────
 const upload = multer({ dest: "uploads/" });
 
-app.post("/upload", upload.single("image"), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-
-    const imagePath = path.resolve(req.file.path);
-    uploadedImagePath = imagePath;
-    console.log("🖼️ OCR received:", imagePath);
-
-    // Respond immediately
-    res.json({ status: "processing", imagePath: `/uploads/${path.basename(imagePath)}` });
-
-    // Perform OCR asynchronously and emit results
-    Tesseract.recognize(imagePath, "eng+chi_sim", {
-      logger: (m) => console.log(m.status, m.progress),
-    })
-      .then((result) => {
-        const raw = result.data.text || "";
-
-        const lines = raw
-          .split("\n")
-          .map((l) => l.replace(/\s+/g, "").trim())
-          .filter((l) => l.length > 0);
-
-        const names = [];
-        for (const l of lines) {
-          if (/^(x+|[\d\W_]+)$/i.test(l)) continue;
-          names.push(l);
-        }
-
-        // 🧩 Smart name segmentation (handles 清源, Aerokhart神, 君王Axel)
-        const merged = [];
-        for (let l of names) {
-          // 1️⃣ Split when multiple Chinese names glued together (轻云清源 → 轻云|清源)
-          l = l.replace(/([\u4e00-\u9fa5]{2,})(?=[\u4e00-\u9fa5]{2,})/g, "$1|");
-
-          // 2️⃣ Split when multiple English glued (JinshiNeslein → Jinshi|Neslein)
-          l = l.replace(/([A-Za-z]{3,})(?=[A-Z][a-z]+)/g, "$1|");
-
-          // 3️⃣ Keep Chinese+English together if mixed (君王Axel stays, Aerokhart神 stays)
-          // So do NOT split Chinese↔English boundaries here intentionally.
-
-          // 4️⃣ Split only if line becomes very long (too many names stuck)
-          if (l.length > 20) {
-            l = l.replace(/([A-Za-z\u4e00-\u9fa5]{4,}?)(?=[A-Za-z\u4e00-\u9fa5]{4,})/g, "$1|");
-          }
-
-          const parts = l.split("|").map((p) => p.trim()).filter(Boolean);
-
-          for (const p of parts) {
-            if (p.length > 1 && !/^x+$/i.test(p)) merged.push(p);
-          }
-        }
-
-        console.log("✅ OCR final parsed names:", merged);
-
-        io.emit("ocr-result", {
-          names: merged,
-          imagePath: `/uploads/${path.basename(imagePath)}`,
-        });
-      })
-      .catch((err) => {
-        console.error("❌ OCR error:", err);
-        io.emit("ocr-result", { error: "OCR failed." });
-      });
-  } catch (err) {
-    console.error("❌ Upload error:", err);
-    res.status(500).json({ error: "Upload failed" });
-  }
-});
-
-// Serve uploaded images
+app.use(express.static("public"));
 app.use("/uploads", express.static("uploads"));
 
-// ─── Push to Discord ────────────────────────────
-app.get("/push-discord", async (req, res) => {
-  const webhook = process.env.DISCORD_WEBHOOK_URL;
-  const boss = req.query.boss || "Unknown Boss";
+app.post("/upload", upload.single("image"), async (req, res) => {
+  const imagePath = req.file.path;
 
-  const active = Array.from(voiceMembers.values()).map((m) => ({
-    name: m.name,
-    duration: Math.round((Date.now() - m.joinTime) / 1000),
-  }));
+  try {
+    const processedPath = `${imagePath}-processed.png`;
 
-  const report = active
-    .map((m) => {
-      const minutes = Math.floor(m.duration / 60);
-      const seconds = m.duration % 60;
-      return `${m.name} — ${minutes}m ${seconds}s — ${boss} — Present ✅`;
-    })
-    .join("\n");
+    await sharp(imagePath)
+      .resize({ width: 1360, height: 768, fit: "inside" })
+      .normalize()
+      .toFile(processedPath);
 
-  const content = `🎧 **Boss Attendance Report**\n**Boss:** ${boss}\n-----------------\n${report || "_No active members detected._"}`;
+    console.log("🟩 Processing image for OCR:", processedPath);
 
-  const body = uploadedImagePath
-    ? {
-        content,
-        embeds: [
-          {
-            title: "Attendance Image",
-            image: { url: `attachment://${path.basename(uploadedImagePath)}` },
-          },
-        ],
-      }
-    : { content };
+    const result = await Tesseract.recognize(processedPath, "eng+chi_sim", {
+      logger: (m) => console.log(m),
+    });
 
-  const formData = new FormData();
-  formData.append("payload_json", JSON.stringify(body));
+    // ✅ Updated OCR logic for per-box Chinese + English name detection
+    const words = result.data.words || [];
+    const boxes = [];
 
-  if (uploadedImagePath) {
-    const buffer = await fs.readFile(uploadedImagePath);
-    formData.append("files[0]", buffer, path.basename(uploadedImagePath));
-  }
-
-  await fetch(webhook, {
-    method: "POST",
-    body: formData,
-  });
-
-  console.log("✅ Attendance pushed to Discord");
-  res.send("ok");
-});
-
-// ─── Auto-sync active members on startup ────────
-client.on("ready", async () => {
-  const guild = await client.guilds.fetch(process.env.DISCORD_GUILD_ID);
-  const channel = await guild.channels.fetch(process.env.DISCORD_VOICE_CHANNEL_ID);
-  if (channel && channel.isVoiceBased()) {
-    for (const [id, member] of channel.members) {
-      voiceMembers.set(id, {
-        id,
-        name: member.displayName || member.user.username,
-        joinTime: Date.now(),
-      });
+    // Group words vertically into boxes (same Y level ≈ same row)
+    for (const w of words) {
+      if (!w.text || /^(x+|[\W_]+)$/i.test(w.text)) continue;
+      const y = Math.round(w.bbox.y0 / 40); // adjust divisor for box height
+      if (!boxes[y]) boxes[y] = [];
+      boxes[y].push(w.text.trim());
     }
-    sendUpdate();
+
+    // Merge each horizontal box content
+    const merged = boxes
+      .map((group) => group.join("").trim())
+      .filter((name) => name.length > 1);
+
+    // Post-fix: fix glued Chinese/English
+    const finalNames = [];
+    for (let name of merged) {
+      // keep names like 君王Axel or Aerokhart神
+      name = name.replace(/\s+/g, "");
+      // split if multiple separate names glued together horizontally
+      name = name.replace(/([\u4e00-\u9fa5]{2,})(?=[A-Za-z])/g, "$1|");
+      name = name.replace(/([A-Za-z]+)(?=[\u4e00-\u9fa5])/g, "$1|");
+      name = name.replace(/([A-Za-z]{3,})(?=[A-Z][a-z]+)/g, "$1|");
+
+      const parts = name.split("|").map((n) => n.trim()).filter(Boolean);
+      finalNames.push(...parts);
+    }
+
+    console.log("✅ OCR per-box detected:", finalNames);
+
+    io.emit("ocr-result", {
+      names: finalNames,
+      imagePath: `/uploads/${path.basename(imagePath)}`,
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("❌ OCR processing failed:", error);
+    res.status(500).json({ error: "Failed to process image." });
   }
 });
 
-client.login(process.env.DISCORD_BOT_TOKEN);
+io.on("connection", (socket) => {
+  console.log("🟢 Client connected");
+  socket.on("disconnect", () => console.log("🔴 Client disconnected"));
+});
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`🌐 Server running on port ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
