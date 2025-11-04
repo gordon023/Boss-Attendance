@@ -43,14 +43,17 @@ client.once("clientReady", () => {
   io.emit("bot-status", { connected: true, name: client.user.tag });
 });
 
-client.on("voiceStateUpdate", (oldState, newState) => {
+client.on("voiceStateUpdate", async (oldState, newState) => {
   const channelId = process.env.DISCORD_VOICE_CHANNEL_ID;
 
   // Member joined
   if (newState.channelId === channelId && oldState.channelId !== channelId) {
+    const member = newState.member;
+    const nickname = member.displayName || member.user.username;
+
     voiceMembers.set(newState.id, {
       id: newState.id,
-      name: newState.member.user.username,
+      name: nickname,
       joinTime: Date.now(),
     });
   }
@@ -63,7 +66,7 @@ client.on("voiceStateUpdate", (oldState, newState) => {
       member.duration = Math.round((member.leaveTime - member.joinTime) / 1000);
       pastAttendance.push(member);
       voiceMembers.delete(oldState.id);
-      fs.writeJson(DATA_FILE, pastAttendance);
+      await fs.writeJson(DATA_FILE, pastAttendance);
     }
   }
 
@@ -81,6 +84,7 @@ function sendUpdate() {
     past: pastAttendance.slice(-20),
   });
 }
+
 
 app.get("/push-discord", async (req, res) => {
   const webhook = process.env.DISCORD_WEBHOOK_URL;
