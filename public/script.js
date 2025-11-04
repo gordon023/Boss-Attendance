@@ -1,37 +1,48 @@
 const socket = io();
-const tbody = document.querySelector("#bossTable tbody");
 
-socket.on("update", (data) => {
-  tbody.innerHTML = "";
-  data.forEach(boss => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${boss.name}</td><td>${boss.date}</td><td>${boss.remaining}</td>`;
-    tbody.appendChild(tr);
+// Sidebar navigation
+document.querySelectorAll(".sidebar li").forEach(li => {
+  li.addEventListener("click", () => {
+    document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+    document.getElementById(li.dataset.section).classList.add("active");
   });
 });
 
-function addBoss() {
-  const name = document.getElementById("bossName").value;
-  const date = document.getElementById("spawnDate").value;
-  if (!name || !date) return alert("Please enter both fields");
-  socket.emit("addBoss", { name, date, remaining: "calculating..." });
-}
-
-function clearFields() {
-  document.getElementById("bossName").value = "";
-  document.getElementById("spawnDate").value = "";
-}
-
-async function uploadImage() {
-  const file = document.getElementById("imageUpload").files[0];
-  if (!file) return alert("Choose an image");
-  const formData = new FormData();
-  formData.append("image", file);
-  const res = await fetch("/upload", { method: "POST", body: formData });
+// Boss list upload
+document.getElementById("bossForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const form = e.target;
+  const file = form.file.files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch("/upload-bosslist", { method: "POST", body: fd });
   const data = await res.json();
-  document.getElementById("ocrText").innerText = data.text || "No text detected.";
+  if (data.success) renderBosses(data.bosses);
+});
+
+function renderBosses(bosses) {
+  const div = document.getElementById("bossTable");
+  div.innerHTML = "<h3>Boss List</h3>" + bosses.map(b =>
+    `<div>${b.name} - ${new Date(b.time).toLocaleString()}</div>`
+  ).join("");
 }
 
-function updateDiscord() {
-  socket.emit("updateToDiscord", "✅ Attendance updated successfully.");
-}
+// Attendance OCR upload
+document.getElementById("attForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const file = e.target.file.files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch("/upload-ocr", { method: "POST", body: fd });
+  const data = await res.json();
+  if (data.success) {
+    document.getElementById("attText").textContent = data.text;
+  }
+});
+
+socket.on("ocr-result", text => {
+  document.getElementById("attText").textContent = text;
+});
+socket.on("boss-update", bosses => renderBosses(bosses));
