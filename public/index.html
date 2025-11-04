@@ -1,39 +1,52 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Boss Attendance - Live Update</title>
-  <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Boss Attendance Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="container">
-    <h1>Boss Attendance - Live update</h1>
+  <div class="layout">
+    <aside class="sidebar">
+      <h2>Boss Panel</h2>
+      <ul>
+        <li data-section="boss">Boss Tracker</li>
+        <li data-section="attendance">Attendance</li>
+        <li data-section="voice">Voice Tracker</li>
+        <li data-section="report">Report</li>
+      </ul>
+    </aside>
 
-    <div class="panel" id="spawn-panel">
-      <h2>Spawning Boss</h2>
-      <input id="bossName" placeholder="boss name">
-      <input id="spawnDate" type="datetime-local">
-      <button onclick="addBoss()">Add Boss</button>
-      <button onclick="clearFields()">Clear</button>
-      <table id="bossTable">
-        <thead><tr><th>Boss</th><th>Spawn Date</th><th>Remaining Time</th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
+    <main id="main">
+      <section id="boss" class="panel active">
+        <h1>Boss Tracker</h1>
+        <form id="bossForm">
+          <input type="file" name="file" />
+          <button type="submit">Upload Boss List</button>
+        </form>
+        <div id="bossTable"></div>
+      </section>
 
-    <div class="panel">
-      <h3>Upload image for attendance detection</h3>
-      <input type="file" id="imageUpload">
-      <button onclick="uploadImage()">Upload</button>
-      <pre id="ocrText"></pre>
-    </div>
+      <section id="attendance" class="panel">
+        <h1>Attendance OCR</h1>
+        <form id="attForm">
+          <input type="file" name="file" />
+          <button type="submit">Upload Image</button>
+        </form>
+        <div id="attText"></div>
+      </section>
 
-    <div class="panel">
-      <h3>Discord Voice-Chat live</h3>
-      <ul id="vcMembers"></ul>
-      <button onclick="updateDiscord()">Update to Discord</button>
-    </div>
+      <section id="voice" class="panel">
+        <h1>Voice Tracker</h1>
+        <p>This panel will show members detected via your Discord bot.</p>
+      </section>
+
+      <section id="report" class="panel">
+        <h1>Attendance Report</h1>
+        <div id="reportData"></div>
+      </section>
+    </main>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
