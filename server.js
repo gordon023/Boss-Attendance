@@ -27,10 +27,11 @@ const client = new Client({
 let voiceMembers = new Map(); // store { id, name, joinTime }
 let pastAttendance = [];
 
-client.once("ready", () => {
+client.once("clientReady", () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   io.emit("bot-status", { connected: true, name: client.user.tag });
 });
+
 
 client.on("voiceStateUpdate", (oldState, newState) => {
   const channelId = process.env.DISCORD_VOICE_CHANNEL_ID;
@@ -102,3 +103,7 @@ app.get("/push-discord", async (req, res) => {
 
 server.listen(3000, () => console.log("🌐 Server running on port 3000"));
 client.login(process.env.DISCORD_BOT_TOKEN);
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`🌐 Server running on port ${PORT}`));
+
