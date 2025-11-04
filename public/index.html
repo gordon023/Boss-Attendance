@@ -1,50 +1,54 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Boss Attendance Tracker</title>
-  <link rel="stylesheet" href="style.css" />
-</head>
-<body>
-  <div class="dashboard">
-    <h1>🎧 Boss Attendance Dashboard</h1>
-    <div class="grid">
-      <div class="panel">
-        <h2>Active Voice Chat</h2>
-        <select id="bossSelect">
-          <option value="Venatus">Venatus</option>
-          <option value="Livera">Livera</option>
-          <option value="Arkaine">Arkaine</option>
-        </select>
-        <button id="transferBtn">📋 Transfer List</button>
-        <table>
-          <thead><tr><th>Name</th><th>Time</th></tr></thead>
-          <tbody id="activeBody"></tbody>
-        </table>
-      </div>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Discord Voice Attendance Tracker</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <h1>🎧 Discord Voice Attendance Tracker</h1>
+      <div id="bot-status" class="status">🔴 Bot Disconnected</div>
 
-      <div class="panel">
-        <h2>Attendance Upload</h2>
-        <form id="uploadForm">
-          <input type="file" name="image" accept="image/*" required />
-          <button type="submit">Upload Image</button>
-        </form>
-        <img id="preview" src="" alt="Preview" />
-        <ul id="detectedNames"></ul>
-      </div>
+      <div class="panel-grid">
+        <!-- Panel 1: Active Voice Chat -->
+        <div class="panel">
+          <h2>🟢 Active Voice Chat</h2>
+          <label>Boss Name:</label>
+          <select id="bossSelect">
+            <option>World Boss</option>
+            <option>Guild Boss</option>
+            <option>Event Boss</option>
+          </select>
+          <button id="transferList">Transfer List</button>
 
-      <div class="panel">
-        <h2>Discord Push Preview</h2>
-        <table>
-          <thead><tr><th>Name</th><th>Duration</th><th>Status</th></tr></thead>
-          <tbody id="previewBody"></tbody>
-        </table>
-        <button id="pushDiscord">📤 Push to Discord</button>
+          <table id="activeTable">
+            <thead>
+              <tr><th>Member</th><th>Time Active</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <!-- Panel 2: Upload Attendance Image -->
+        <div class="panel">
+          <h2>🖼️ Upload Attendance Image</h2>
+          <input type="file" id="imageInput" accept="image/*" />
+          <button id="uploadBtn">Upload + OCR</button>
+          <div id="ocrResult"></div>
+        </div>
+
+        <!-- Panel 3: Discord Push Preview -->
+        <div class="panel">
+          <h2>📤 Push Attendance to Discord</h2>
+          <div id="preview"></div>
+          <button id="pushDiscord">Push to Discord</button>
+        </div>
       </div>
     </div>
-  </div>
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="script.js"></script>
-</body>
+
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="script.js"></script>
+  </body>
 </html>
