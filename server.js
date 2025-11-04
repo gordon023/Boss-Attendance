@@ -107,26 +107,40 @@ app.post("/upload", upload.single("image"), async (req, res) => {
         const raw = result.data.text || "";
 
         // --- OCR cleanup & merging logic ---
-        const tokens = raw
-          .split(/\s+/)
-          .map((l) => l.trim())
-          .filter((l) => l.length > 0 && !/^[^A-Za-z0-9\u4e00-\u9fa5]+$/.test(l));
+        // --- Improved OCR cleanup & splitting logic (handles mixed names) ---
+const lines = raw
+  .split("\n")
+  .map((l) => l.replace(/\s+/g, "").trim())
+  .filter((l) => l.length > 0);
 
-        const merged = [];
-        let buffer = "";
-        for (const t of tokens) {
-          if (/^[\u4e00-\u9fa5A-Za-z0-9]+$/.test(t)) {
-            buffer += t;
-            if (/[a-z]/.test(t) || t.length > 1) {
-              merged.push(buffer);
-              buffer = "";
-            }
-          } else if (buffer) {
-            merged.push(buffer);
-            buffer = "";
-          }
-        }
-        if (buffer) merged.push(buffer);
+const merged = [];
+
+for (const line of lines) {
+  // Step 1: remove junk (random x, numbers, or isolated symbols)
+  if (/^(x+|[\d\W_]+)$/i.test(line)) continue;
+
+  // Step 2: heuristic splitting:
+  // We break when we detect 2+ Chinese names glued together OR too long English clusters.
+  let temp = line;
+
+  // Case A: multiple Chinese groups (e.g. 轻云清源) — split between them.
+  temp = temp.replace(/([\u4e00-\u9fa5]{2,})(?=[\u4e00-\u9fa5]{2,})/g, "$1|");
+
+  // Case B: when there's a mix of 3+ distinct blocks like 中文英文中文.
+  temp = temp.replace(/([\u4e00-\u9fa5]+[A-Za-z0-9]+[\u4e00-\u9fa5]+)/g, (m) => {
+    // If short (<=8 chars) we keep it (e.g. Aerokhart神)
+    return m.length <= 8 ? m : m.replace(/([A-Za-z0-9]+)(?=[\u4e00-\u9fa5]+)/g, "$1|");
+  });
+
+  // Now split by inserted |
+  const parts = temp.split("|").map((p) => p.trim()).filter(Boolean);
+
+  for (const p of parts) {
+    if (p.length > 1 && !/^x+$/i.test(p)) merged.push(p);
+  }
+}
+// ----------------------------------------------
+
         // ------------------------------------
 
         console.log("✅ OCR detected merged:", merged);
