@@ -1,48 +1,68 @@
 const socket = io();
-let activeData = [];
-let detected = [];
-let currentBoss = "Unknown";
+const activeBody = document.querySelector("#activeTable tbody");
+const statusEl = document.getElementById("bot-status");
+const previewEl = document.getElementById("preview");
+const ocrResultEl = document.getElementById("ocrResult");
 
-socket.on("update-attendance", (data) => {
-  activeData = data.active;
-  detected = data.detected || [];
+let activeMembers = [];
+let ocrNames = [];
+let combinedList = [];
 
-  const activeBody = document.getElementById("activeBody");
-  activeBody.innerHTML = "";
-  activeData.forEach(m => {
-    const mins = Math.floor(m.duration / 60);
-    const secs = m.duration % 60;
-    activeBody.innerHTML += `<tr><td>${m.name}</td><td>${mins}m ${secs}s</td></tr>`;
-  });
-
-  const detectedList = document.getElementById("detectedNames");
-  detectedList.innerHTML = detected.map(n => `<li>${n}</li>`).join("");
-
-  if (data.image) document.getElementById("preview").src = data.image;
+// --- Socket events ---
+socket.on("bot-status", (data) => {
+  statusEl.textContent = `🟢 Bot Connected as ${data.name}`;
+  statusEl.style.background = "#1a472a";
 });
 
-document.getElementById("uploadForm").onsubmit = async (e) => {
-  e.preventDefault();
-  const form = e.target;
-  const res = await fetch("/upload", { method: "POST", body: new FormData(form) });
-  const result = await res.json();
-  alert("✅ Image uploaded and processed!");
+socket.on("update-attendance", (data) => {
+  activeMembers = data.active;
+  renderActive();
+});
+
+function renderActive() {
+  activeBody.innerHTML = "";
+  activeMembers.forEach((m) => {
+    const minutes = Math.floor(m.duration / 60);
+    const seconds = m.duration % 60;
+    const row = `<tr><td>${m.name}</td><td>${minutes}m ${seconds}s</td></tr>`;
+    activeBody.innerHTML += row;
+  });
+}
+
+// --- Upload and OCR ---
+document.getElementById("uploadBtn").onclick = async () => {
+  const fileInput = document.getElementById("imageInput");
+  if (!fileInput.files.length) return alert("Please select an image!");
+
+  const formData = new FormData();
+  formData.append("image", fileInput.files[0]);
+
+  ocrResultEl.textContent = "⏳ Processing image...";
+
+  const res = await fetch("/upload", { method: "POST", body: formData });
+  const data = await res.json();
+  ocrNames = data.names;
+
+  ocrResultEl.innerHTML = "<b>Detected Names:</b><br>" + ocrNames.join("<br>");
 };
 
-document.getElementById("transferBtn").onclick = () => {
-  const bossSelect = document.getElementById("bossSelect");
-  currentBoss = bossSelect.value;
+// --- Transfer List ---
+document.getElementById("transferList").onclick = () => {
+  const boss = document.getElementById("bossSelect").value;
 
-  const previewBody = document.getElementById("previewBody");
-  previewBody.innerHTML = activeData.map(m => {
-    const mins = Math.floor(m.duration / 60);
-    const secs = m.duration % 60;
-    const present = detected.includes(m.name) ? "Present" : "Absent";
-    return `<tr><td>${m.name}</td><td>${mins}m ${secs}s</td><td>${present}</td></tr>`;
-  }).join("");
+  combinedList = activeMembers.map((m) => {
+    const isPresent = ocrNames.some((n) => n.toLowerCase().includes(m.name.toLowerCase()));
+    const minutes = Math.floor(m.duration / 60);
+    const seconds = m.duration % 60;
+    return `${m.name} — ${minutes}m ${seconds}s — ${boss} — ${isPresent ? "Present ✅" : "Absent ❌"}`;
+  });
+
+  previewEl.innerHTML = "<b>Preview:</b><br>" + combinedList.join("<br>");
 };
 
+// --- Push to Discord ---
 document.getElementById("pushDiscord").onclick = async () => {
-  await fetch(`/push-discord?boss=${encodeURIComponent(currentBoss)}`);
-  alert(`✅ Attendance for ${currentBoss} pushed to Discord!`);
+  const boss = document.getElementById("bossSelect").value;
+  await fetch(`/push-discord?boss=${encodeURIComponent(boss)}`);
+  alert("✅ Attendance pushed to Discord!");
 };
