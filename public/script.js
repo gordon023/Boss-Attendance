@@ -3,9 +3,11 @@ const activeBody = document.querySelector("#activeTable tbody");
 const statusEl = document.getElementById("bot-status");
 const ocrResultEl = document.getElementById("ocrResult");
 const previewEl = document.getElementById("preview");
+const imagePreviewEl = document.getElementById("imagePreview");
 
 let activeMembers = [];
 let ocrNames = [];
+let uploadedImages = [];
 let combinedList = [];
 
 // ─── Bot Connection ───
@@ -35,8 +37,9 @@ document.getElementById("uploadBtn").onclick = async () => {
   const fileInput = document.getElementById("imageInput");
   if (!fileInput.files.length) return alert("Please select an image!");
 
+  const file = fileInput.files[0];
   const formData = new FormData();
-  formData.append("image", fileInput.files[0]);
+  formData.append("image", file);
 
   ocrResultEl.textContent = "⏳ Uploading and processing image...";
 
@@ -46,6 +49,7 @@ document.getElementById("uploadBtn").onclick = async () => {
   if (data.error) {
     ocrResultEl.textContent = "❌ OCR failed.";
   } else {
+    uploadedImages.push(URL.createObjectURL(file));
     ocrResultEl.textContent = "Processing OCR... Please wait...";
   }
 };
@@ -57,8 +61,18 @@ socket.on("ocr-result", (data) => {
     return;
   }
 
-  ocrNames = data.names;
-  ocrResultEl.innerHTML = `<b>Detected Names:</b><br>${ocrNames.join("<br>")}`;
+  // Append new names to existing list
+  ocrNames.push(...data.names.filter((n) => !ocrNames.includes(n)));
+
+  // Rebuild vertical table view
+  const rows = ocrNames.map((n, i) => `<tr><td>${i + 1}</td><td>${n}</td></tr>`).join("");
+  ocrResultEl.innerHTML = `
+    <b>Detected Names:</b>
+    <table style="width:100%; border-collapse: collapse; margin-top:5px;">
+      <thead><tr><th>#</th><th>Name</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
 });
 
 // ─── Transfer List ───
@@ -66,14 +80,39 @@ document.getElementById("transferList").onclick = () => {
   const boss = document.getElementById("bossSelect").value;
   if (!ocrNames.length) return alert("No OCR names detected yet!");
 
-  combinedList = activeMembers.map((m) => {
-    const isPresent = ocrNames.some((n) => n.toLowerCase().includes(m.name.toLowerCase()));
-    const minutes = Math.floor(m.duration / 60);
-    const seconds = m.duration % 60;
-    return `${m.name} — ${minutes}m ${seconds}s — ${boss} — ${isPresent ? "Present ✅" : "Absent ❌"}`;
+  combinedList = ocrNames.map((ocrName) => {
+    const voiceMatch = activeMembers.find((m) =>
+      ocrName.toLowerCase().includes(m.name.toLowerCase())
+    );
+    const inVoice = voiceMatch ? "✅ Yes" : "❌ No";
+    const inBoss = "✅ Yes"; // Assuming always active boss hunt for matched
+    return {
+      ocrName,
+      voiceName: voiceMatch ? voiceMatch.name : "—",
+      inVoice,
+      inBoss,
+    };
   });
 
-  previewEl.innerHTML = `<b>Preview:</b><br>${combinedList.join("<br>")}`;
+  // Show combined list in Panel 3
+  const tableRows = combinedList
+    .map(
+      (r) =>
+        `<tr><td>${r.ocrName}</td><td>${r.voiceName}</td><td>${r.inVoice}</td><td>${r.inBoss}</td></tr>`
+    )
+    .join("");
+  previewEl.innerHTML = `
+    <table style="width:100%; border-collapse: collapse;">
+      <thead>
+        <tr><th>Image Detected</th><th>Voice Chat Nickname</th><th>Present in Voice</th><th>Present in Boss Hunt</th></tr>
+      </thead>
+      <tbody>${tableRows}</tbody>
+    </table>
+  `;
+
+  imagePreviewEl.innerHTML = uploadedImages
+    .map((src) => `<img src="${src}" />`)
+    .join("");
 };
 
 // ─── Push to Discord ───
