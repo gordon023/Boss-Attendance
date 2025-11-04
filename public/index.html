@@ -3,38 +3,48 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Voice Attendance Tracker</title>
+  <title>Boss Attendance Tracker</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="container">
-    <h1>🎧 Voice Channel Attendance</h1>
-    <p id="bot-status">🔴 Bot Disconnected</p>
+  <div class="dashboard">
+    <h1>🎧 Boss Attendance Dashboard</h1>
+    <div class="grid">
+      <div class="panel">
+        <h2>Active Voice Chat</h2>
+        <select id="bossSelect">
+          <option value="Venatus">Venatus</option>
+          <option value="Livera">Livera</option>
+          <option value="Arkaine">Arkaine</option>
+        </select>
+        <button id="transferBtn">📋 Transfer List</button>
+        <table>
+          <thead><tr><th>Name</th><th>Time</th></tr></thead>
+          <tbody id="activeBody"></tbody>
+        </table>
+      </div>
 
-    <div class="control">
-      <select id="bossSelect">
-        <option>Venatus</option>
-        <option>Livera</option>
-        <option>Zakum</option>
-        <option>Hilla</option>
-      </select>
-      <button id="pushDiscord">Push to Discord</button>
+      <div class="panel">
+        <h2>Attendance Upload</h2>
+        <form id="uploadForm">
+          <input type="file" name="image" accept="image/*" required />
+          <button type="submit">Upload Image</button>
+        </form>
+        <img id="preview" src="" alt="Preview" />
+        <ul id="detectedNames"></ul>
+      </div>
+
+      <div class="panel">
+        <h2>Discord Push Preview</h2>
+        <table>
+          <thead><tr><th>Name</th><th>Duration</th><th>Status</th></tr></thead>
+          <tbody id="previewBody"></tbody>
+        </table>
+        <button id="pushDiscord">📤 Push to Discord</button>
+      </div>
     </div>
-
-    <h2>Active Voice Channel</h2>
-    <table id="activeTable">
-      <thead><tr><th>Name</th><th>Duration</th></tr></thead>
-      <tbody></tbody>
-    </table>
-
-    <h2>Recent Attendance</h2>
-    <table id="pastTable">
-      <thead><tr><th>Name</th><th>Duration</th></tr></thead>
-      <tbody></tbody>
-    </table>
   </div>
-
-  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
