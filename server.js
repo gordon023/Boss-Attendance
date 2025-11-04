@@ -86,8 +86,6 @@ function sendUpdate() {
 }
 
 // ─── Upload + OCR (English + Chinese, merged names) ───────────
-// ─── Upload + OCR (English + Chinese, smarter vertical detection) ───────────
-// ─── Upload + OCR (English + Chinese, vertical box detection) ───────────
 const upload = multer({ dest: "uploads/" });
 
 app.post("/upload", upload.single("image"), async (req, res) => {
@@ -98,53 +96,65 @@ app.post("/upload", upload.single("image"), async (req, res) => {
     uploadedImagePath = imagePath;
     console.log("🖼️ OCR received:", imagePath);
 
-    // respond immediately
+    // Respond immediately
     res.json({ status: "processing", imagePath: `/uploads/${path.basename(imagePath)}` });
 
-    // Run OCR in "sparse text" mode (PSM 11) for box-like rows
-    Tesseract.recognize(imagePath, "chi_sim+eng", {
-      tessedit_pageseg_mode: 11, // detect many small text boxes
+    // Perform OCR asynchronously and emit results
+    Tesseract.recognize(imagePath, "eng+chi_sim", {
       logger: (m) => console.log(m.status, m.progress),
     })
       .then((result) => {
-  const raw = result.data.text || "";
+        const raw = result.data.text || "";
 
-  // Split and clean base lines
-  const lines = raw
-    .split(/\r?\n/)
-    .map((l) => l.replace(/\s+/g, "").trim())
-    .filter((l) => l.length > 0 && !/^[xX\d\W]+$/.test(l));
+        // --- OCR cleanup ---
+        const lines = raw
+          .split("\n")
+          .map((l) => l.replace(/\s+/g, "").trim())
+          .filter((l) => l.length > 0);
 
-  const names = [];
+        const names = [];
+        for (const l of lines) {
+          if (/^(x+|[\d\W_]+)$/i.test(l)) continue;
+          names.push(l);
+        }
 
-  for (let line of lines) {
-    // Split by:
-    // - English↔Chinese boundary
-    // - Lower→Upper case boundary
-    // - Number→Letter boundary
-    // - Two+ capital letters followed by lowercase (e.g., CROZZBOWThalechoe)
-    line = line
-      .replace(/([A-Z]{2,})([A-Z][a-z])/g, "$1|$2")
-      .replace(/([a-z])([A-Z])/g, "$1|$2")
-      .replace(/([A-Za-z]+)(?=[\u4e00-\u9fa5])/g, "$1|")
-      .replace(/([\u4e00-\u9fa5]+)(?=[A-Za-z])/g, "$1|")
-      .replace(/([0-9])([A-Za-z])/g, "$1|$2")
-      .replace(/([A-Za-z])([0-9])/g, "$1|$2");
+        // 🔧 Improved OCR logic: keep trailing Chinese (e.g. Aerokhart神), split only when Chinese comes first
+        const merged = [];
+        for (let i = 0; i < names.length; i++) {
+          let current = names[i];
+          const next = names[i + 1];
 
-    for (const n of line.split("|")) {
-      const name = n.trim();
-      if (name.length > 1 && !/^[xX\d\W]+$/.test(name)) names.push(name);
-    }
-  }
+          if (/[\u4e00-\u9fa5]/.test(current) && /[A-Za-z]/.test(current)) {
+            // Split only when Chinese precedes English (e.g. 清源Aerokhart → 清源 + Aerokhart)
+            const parts = current.split(/(?<=[\u4e00-\u9fa5])(?=[A-Za-z])/);
+            merged.push(...parts.filter(Boolean));
+            continue;
+          }
 
-  console.log("✅ OCR vertical names (split improved):", names);
+          // Merge short + uppercase next (Lola + Kerps)
+          if (
+            next &&
+            current.length <= 4 &&
+            /^[A-Z]/.test(next) &&
+            !/[\u4e00-\u9fa5]/.test(current + next)
+          ) {
+            merged.push(current + next);
+            i++;
+            continue;
+          }
 
-  io.emit("ocr-result", {
-    names,
-    imagePath: `/uploads/${path.basename(imagePath)}`,
-  });
-})
+          if (/^(x+|[\d\W_]+)$/i.test(current)) continue;
 
+          merged.push(current);
+        }
+
+        console.log("✅ OCR vertical names (split improved):", merged);
+
+        io.emit("ocr-result", {
+          names: merged,
+          imagePath: `/uploads/${path.basename(imagePath)}`,
+        });
+      })
       .catch((err) => {
         console.error("❌ OCR error:", err);
         io.emit("ocr-result", { error: "OCR failed." });
@@ -154,7 +164,6 @@ app.post("/upload", upload.single("image"), async (req, res) => {
     res.status(500).json({ error: "Upload failed" });
   }
 });
-
 
 // Serve uploaded images
 app.use("/uploads", express.static("uploads"));
@@ -177,7 +186,9 @@ app.get("/push-discord", async (req, res) => {
     })
     .join("\n");
 
-  const content = `🎧 **Boss Attendance Report**\n**Boss:** ${boss}\n-----------------\n${report || "_No active members detected._"}`;
+  const content = `🎧 **Boss Attendance Report**\n**Boss:** ${boss}\n-----------------\n${
+    report || "_No active members detected._"
+  }`;
 
   const body = uploadedImagePath
     ? {
