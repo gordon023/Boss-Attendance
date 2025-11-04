@@ -1,19 +1,21 @@
 {
-  "name": "boss-attendance",
+  "name": "voice-attendance-tracker",
   "version": "1.0.0",
+  "description": "Discord voice channel attendance tracker with OCR upload and web dashboard",
   "main": "server.js",
+  "type": "module",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5",
     "cors": "^2.8.5",
-    "discord.js": "^14.15.3",
-    "dotenv": "^16.4.5",
-    "express": "^4.21.1",
     "fs-extra": "^11.2.0",
-    "multer": "^1.4.5-lts.1",
-    "node-fetch": "^3.4.1",
-    "socket.io": "^4.8.1",
-    "tesseract.js": "^5.1.0"
+    "dotenv": "^16.4.5",
+    "discord.js": "^14.15.3",
+    "node-fetch": "^3.3.2",
+    "tesseract.js": "^5.0.5",
+    "multer": "^1.4.5-lts.1"
   }
 }
