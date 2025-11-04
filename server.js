@@ -31,6 +31,7 @@ const client = new Client({
 let voiceMembers = new Map();
 let pastAttendance = [];
 let uploadedImagePath = null;
+global.lastDetectedNames = [];
 
 // Load saved data
 fs.readJson(DATA_FILE)
@@ -85,6 +86,19 @@ function sendUpdate() {
   });
 }
 
+// ─── Keep clients synced on connect ─────────────
+io.on("connection", (socket) => {
+  console.log("🖥️ Client connected");
+  sendUpdate();
+
+  if (uploadedImagePath) {
+    socket.emit("ocr-result", {
+      names: global.lastDetectedNames,
+      imagePath: `/uploads/${path.basename(uploadedImagePath)}`,
+    });
+  }
+});
+
 // ─── Upload + OCR (English + Chinese, async worker) ───────────
 const upload = multer({ dest: "uploads/" });
 
@@ -104,15 +118,17 @@ app.post("/upload", upload.single("image"), async (req, res) => {
       logger: (m) => console.log(m.status, m.progress),
     })
       .then((result) => {
-        const text = result.data.text || "";
-        const lines = text
-          .split("\n")
-          .map((l) => l.trim())
-          .filter((l) => l.length > 0);
+        // 🔹 Extract individual word boxes (names)
+        const boxes = result.data.words || [];
+        const detectedNames = boxes
+          .map((w) => w.text.trim())
+          .filter((w) => w.length > 0);
 
-        console.log("✅ OCR detected:", lines);
+        global.lastDetectedNames = detectedNames;
+
+        console.log("✅ OCR detected names:", detectedNames);
         io.emit("ocr-result", {
-          names: lines,
+          names: detectedNames,
           imagePath: `/uploads/${path.basename(imagePath)}`,
         });
       })
@@ -139,15 +155,28 @@ app.get("/push-discord", async (req, res) => {
     duration: Math.round((Date.now() - m.joinTime) / 1000),
   }));
 
-  const report = active
-    .map((m) => {
-      const minutes = Math.floor(m.duration / 60);
-      const seconds = m.duration % 60;
-      return `${m.name} — ${minutes}m ${seconds}s — ${boss} — Present ✅`;
-    })
+  // 🔹 Combine OCR names and active voice members
+  const ocrNames = global.lastDetectedNames || [];
+  const combinedList = ocrNames.map((ocrName) => {
+    const match = active.find(
+      (v) => v.name.toLowerCase() === ocrName.toLowerCase()
+    );
+    return {
+      imageName: ocrName,
+      discordName: match ? match.name : "-",
+      activeInDiscord: match ? "✅ Present" : "❌ Absent",
+      bossHunt: match ? "✅ Present" : "❌ Absent",
+    };
+  });
+
+  const combinedReport = combinedList
+    .map(
+      (c) =>
+        `${c.imageName} | ${c.discordName} | ${c.activeInDiscord} | ${c.bossHunt}`
+    )
     .join("\n");
 
-  const content = `🎧 **Boss Attendance Report**\n**Boss:** ${boss}\n-----------------\n${report || "_No active members detected._"}`;
+  const content = `🎯 **Boss Attendance Report**\n-----------------\n${combinedReport}`;
 
   const body = uploadedImagePath
     ? {
