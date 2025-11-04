@@ -74,19 +74,16 @@ function sendUpdate() {
 
 app.get("/push-discord", async (req, res) => {
   const webhook = process.env.DISCORD_WEBHOOK_URL;
+  const boss = req.query.boss || "Unknown Boss";
+
+  const report = pastAttendance.slice(-20).map((m) => {
+    const minutes = Math.floor(m.duration / 60);
+    const seconds = m.duration % 60;
+    return `${m.name} — ${minutes}m ${seconds}s — ${boss} — Present`;
+  }).join("\n");
+
   const message = {
-    content: "**🎧 Attendance Report Update**",
-    embeds: [
-      {
-        title: "Recent Voice Channel Activity",
-        color: 0x5865f2,
-        fields: pastAttendance.slice(-10).map((m) => ({
-          name: m.name,
-          value: `Stayed for ${Math.floor(m.duration / 60)}m ${m.duration % 60}s`,
-          inline: true,
-        })),
-      },
-    ],
+    content: `🎧 **Boss Attendance Report**\n**Boss:** ${boss}\n-----------------\n${report || "_No attendance recorded yet._"}`,
   };
 
   await fetch(webhook, {
@@ -95,11 +92,11 @@ app.get("/push-discord", async (req, res) => {
     body: JSON.stringify(message),
   });
 
-  pastAttendance = [];
+  // keep data saved for persistence
   await fs.writeJson(DATA_FILE, pastAttendance);
   res.send("ok");
-  io.emit("update-attendance", { active: [], past: [] });
 });
+
 
 client.login(process.env.DISCORD_BOT_TOKEN);
 
