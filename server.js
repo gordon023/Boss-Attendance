@@ -6,7 +6,7 @@ import fs from "fs-extra";
 import dotenv from "dotenv";
 import { Client, GatewayIntentBits } from "discord.js";
 import fetch from "node-fetch";
-pastAttendance = await fs.readJson(DATA_FILE).catch(() => []);
+
 
 
 dotenv.config();
@@ -98,6 +98,17 @@ app.get("/push-discord", async (req, res) => {
   await fs.writeJson(DATA_FILE, pastAttendance);
   res.send("ok");
 });
+// Initialize attendance storage
+let pastAttendance = [];
+fs.readJson(DATA_FILE)
+  .then(data => {
+    pastAttendance = data;
+    console.log("✅ Loaded saved attendance data.");
+  })
+  .catch(() => {
+    pastAttendance = [];
+    console.log("⚠️ No existing attendance data found, starting fresh.");
+  });
 
 
 client.login(process.env.DISCORD_BOT_TOKEN);
