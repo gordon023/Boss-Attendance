@@ -2,7 +2,7 @@ import express from "express";
 import http from "http";
 import { Server } from "socket.io";
 import cors from "cors";
-import fs from "fs-extra";
+import fs, { promises as fsp } from "fs";
 import dotenv from "dotenv";
 import path from "path";
 import multer from "multer";
@@ -19,28 +19,40 @@ const io = new Server(server, { cors: { origin: "*" } });
 app.use(cors());
 app.use(express.static("public"));
 
+// === Persistent data store ===
 const DATA_FILE = "./data/attendance.json";
-await fs.ensureFile(DATA_FILE);
-if (!(await fs.readFile(DATA_FILE, "utf8"))) await fs.writeFile(DATA_FILE, "[]");
+
+// ensure file exists
+try {
+  await fsp.access(DATA_FILE);
+} catch {
+  await fsp.mkdir("./data", { recursive: true });
+  await fsp.writeFile(DATA_FILE, "[]");
+}
+
+// load attendance
+let pastAttendance = [];
+try {
+  const content = await fsp.readFile(DATA_FILE, "utf8");
+  pastAttendance = JSON.parse(content || "[]");
+} catch {
+  pastAttendance = [];
+}
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
 });
 
 let voiceMembers = new Map();
-let pastAttendance = [];
 let uploadedImagePath = null;
 global.lastDetectedNames = [];
-
-fs.readJson(DATA_FILE)
-  .then((data) => (pastAttendance = data))
-  .catch(() => (pastAttendance = []));
 
 client.once("ready", () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   io.emit("bot-status", { connected: true, name: client.user.tag });
 });
 
+// === Voice channel attendance tracking ===
 client.on("voiceStateUpdate", async (oldState, newState) => {
   const channelId = process.env.DISCORD_VOICE_CHANNEL_ID;
 
@@ -61,7 +73,7 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
       member.duration = Math.round((member.leaveTime - member.joinTime) / 1000);
       pastAttendance.push(member);
       voiceMembers.delete(oldState.id);
-      await fs.writeJson(DATA_FILE, pastAttendance);
+      await fsp.writeFile(DATA_FILE, JSON.stringify(pastAttendance, null, 2));
     }
   }
 
@@ -92,6 +104,7 @@ io.on("connection", (socket) => {
 
 const upload = multer({ dest: "uploads/" });
 
+// === OCR upload and processing ===
 app.post("/upload", upload.single("image"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -127,6 +140,7 @@ app.post("/upload", upload.single("image"), async (req, res) => {
 
 app.use("/uploads", express.static("uploads"));
 
+// === Push attendance to Discord ===
 app.get("/push-discord", async (req, res) => {
   const webhook = process.env.DISCORD_WEBHOOK_URL;
   const boss = req.query.boss || "Unknown Boss";
@@ -174,7 +188,7 @@ app.get("/push-discord", async (req, res) => {
   formData.append("payload_json", JSON.stringify(body));
 
   if (uploadedImagePath) {
-    const buffer = await fs.readFile(uploadedImagePath);
+    const buffer = await fsp.readFile(uploadedImagePath);
     formData.append("files[0]", buffer, path.basename(uploadedImagePath));
   }
 
@@ -187,6 +201,7 @@ app.get("/push-discord", async (req, res) => {
   res.send("ok");
 });
 
+// === Fetch existing voice members on startup ===
 client.on("ready", async () => {
   const guild = await client.guilds.fetch(process.env.DISCORD_GUILD_ID);
   const channel = await guild.channels.fetch(process.env.DISCORD_VOICE_CHANNEL_ID);
