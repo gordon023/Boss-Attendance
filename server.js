@@ -8,6 +8,7 @@ import path from "path";
 import multer from "multer";
 import Tesseract from "tesseract.js";
 import fetch from "node-fetch";
+import FormData from "form-data";
 import { Client, GatewayIntentBits } from "discord.js";
 
 dotenv.config();
@@ -27,9 +28,9 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
 });
 
-let voiceMembers = new Map(); // Active members
+let voiceMembers = new Map();
 let pastAttendance = [];
-let uploadedImagePath = null; // For Discord push image
+let uploadedImagePath = null;
 
 // Load saved data
 fs.readJson(DATA_FILE)
@@ -84,7 +85,7 @@ function sendUpdate() {
   });
 }
 
-// ─── Upload + OCR (English + Chinese) ───────────
+// ─── Upload + OCR (English + Chinese, async worker) ───────────
 const upload = multer({ dest: "uploads/" });
 
 app.post("/upload", upload.single("image"), async (req, res) => {
@@ -93,27 +94,39 @@ app.post("/upload", upload.single("image"), async (req, res) => {
 
     const imagePath = path.resolve(req.file.path);
     uploadedImagePath = imagePath;
-    console.log("🖼️ OCR processing:", imagePath);
+    console.log("🖼️ OCR received:", imagePath);
 
-    const result = await Tesseract.recognize(imagePath, "eng+chi_sim", {
+    // Respond immediately so browser doesn't hang
+    res.json({ status: "processing", imagePath: `/uploads/${path.basename(imagePath)}` });
+
+    // Perform OCR asynchronously and emit results to client
+    Tesseract.recognize(imagePath, "eng+chi_sim", {
       logger: (m) => console.log(m.status, m.progress),
-    });
+    })
+      .then((result) => {
+        const text = result.data.text || "";
+        const lines = text
+          .split("\n")
+          .map((l) => l.trim())
+          .filter((l) => l.length > 0);
 
-    const text = result.data.text;
-    const lines = text
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0);
-
-    console.log("✅ OCR detected:", lines);
-    res.json({ names: lines, imagePath: `/uploads/${path.basename(imagePath)}` });
+        console.log("✅ OCR detected:", lines);
+        io.emit("ocr-result", {
+          names: lines,
+          imagePath: `/uploads/${path.basename(imagePath)}`,
+        });
+      })
+      .catch((err) => {
+        console.error("❌ OCR error:", err);
+        io.emit("ocr-result", { error: "OCR failed." });
+      });
   } catch (err) {
-    console.error("❌ OCR Error:", err);
-    res.status(500).json({ error: "OCR failed" });
+    console.error("❌ Upload error:", err);
+    res.status(500).json({ error: "Upload failed" });
   }
 });
 
-// Serve uploads statically
+// Serve uploaded images
 app.use("/uploads", express.static("uploads"));
 
 // ─── Push to Discord ────────────────────────────
