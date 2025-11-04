@@ -3,53 +3,30 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Boss Attendance Dashboard</title>
+  <title>Discord Voice Tracker</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="layout">
-    <aside class="sidebar">
-      <h2>Boss Panel</h2>
-      <ul>
-        <li data-section="boss">Boss Tracker</li>
-        <li data-section="attendance">Attendance</li>
-        <li data-section="voice">Voice Tracker</li>
-        <li data-section="report">Report</li>
-      </ul>
-    </aside>
+  <div class="dashboard">
+    <h1>🎧 Discord Voice Attendance</h1>
+    <div id="bot-status" class="status">🔴 Bot Disconnected</div>
 
-    <main id="main">
-      <section id="boss" class="panel active">
-        <h1>Boss Tracker</h1>
-        <form id="bossForm">
-          <input type="file" name="file" />
-          <button type="submit">Upload Boss List</button>
-        </form>
-        <div id="bossTable"></div>
-      </section>
+    <h2>Active Members</h2>
+    <table id="activeTable">
+      <thead><tr><th>Name</th><th>Duration</th></tr></thead>
+      <tbody></tbody>
+    </table>
 
-      <section id="attendance" class="panel">
-        <h1>Attendance OCR</h1>
-        <form id="attForm">
-          <input type="file" name="file" />
-          <button type="submit">Upload Image</button>
-        </form>
-        <div id="attText"></div>
-      </section>
+    <h2>Recent Attendance</h2>
+    <table id="pastTable">
+      <thead><tr><th>Name</th><th>Stayed</th></tr></thead>
+      <tbody></tbody>
+    </table>
 
-      <section id="voice" class="panel">
-        <h1>Voice Tracker</h1>
-        <p>This panel will show members detected via your Discord bot.</p>
-      </section>
-
-      <section id="report" class="panel">
-        <h1>Attendance Report</h1>
-        <div id="reportData"></div>
-      </section>
-    </main>
+    <button id="pushDiscord">📤 Push to Discord</button>
   </div>
 
-  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
