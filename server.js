@@ -20,8 +20,10 @@ app.use(cors());
 app.use(express.static("public"));
 
 const DATA_FILE = "./data/attendance.json";
-await fs.ensureFile(DATA_FILE);
-if (!(await fs.readFile(DATA_FILE, "utf8"))) await fs.writeFile(DATA_FILE, "[]");
+
+// ✅ Ensure data file exists before use
+await fs.ensureDir(path.dirname(DATA_FILE));
+if (!(await fs.pathExists(DATA_FILE))) await fs.writeJson(DATA_FILE, []);
 
 // ─── Discord Bot ────────────────────────────────
 const client = new Client({
@@ -34,9 +36,11 @@ let uploadedImagePath = null;
 global.lastDetectedNames = [];
 
 // Load saved data
-fs.readJson(DATA_FILE)
-  .then((data) => (pastAttendance = data))
-  .catch(() => (pastAttendance = []));
+try {
+  pastAttendance = await fs.readJson(DATA_FILE);
+} catch {
+  pastAttendance = [];
+}
 
 client.once("ready", () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
