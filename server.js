@@ -101,7 +101,6 @@ app.get("/push-discord", async (req, res) => {
   io.emit("update-attendance", { active: [], past: [] });
 });
 
-server.listen(3000, () => console.log("🌐 Server running on port 3000"));
 client.login(process.env.DISCORD_BOT_TOKEN);
 
 const PORT = process.env.PORT || 3000;
