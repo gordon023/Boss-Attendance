@@ -1,22 +1,16 @@
 {
-  "name": "voice-attendance-tracker",
+  "name": "ocr-server",
   "version": "1.0.0",
-  "description": "Discord voice channel attendance tracker with OCR upload and web dashboard",
-  "main": "server.js",
   "type": "module",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.19.2",
-    "socket.io": "^4.7.5",
-    "cors": "^2.8.5",
-    "fs-extra": "^11.2.0",
-    "dotenv": "^16.4.5",
-    "discord.js": "^14.15.3",
-    "node-fetch": "^3.3.2",
-    "tesseract.js": "^5.0.5",
+    "http": "^0.0.1-security",
+    "socket.io": "^4.7.2",
     "multer": "^1.4.5-lts.1",
-    "form-data": "^4.0.0"
+    "tesseract.js": "^5.1.0",
+    "sharp": "^0.33.3"
   }
 }
