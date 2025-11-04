@@ -31,7 +31,6 @@ const client = new Client({
 let voiceMembers = new Map();
 let pastAttendance = [];
 let uploadedImagePath = null;
-global.lastDetectedNames = [];
 
 // Load saved data
 fs.readJson(DATA_FILE)
@@ -86,20 +85,7 @@ function sendUpdate() {
   });
 }
 
-// ─── Keep clients synced on connect ─────────────
-io.on("connection", (socket) => {
-  console.log("🖥️ Client connected");
-  sendUpdate();
-
-  if (uploadedImagePath) {
-    socket.emit("ocr-result", {
-      names: global.lastDetectedNames,
-      imagePath: `/uploads/${path.basename(uploadedImagePath)}`,
-    });
-  }
-});
-
-// ─── Upload + OCR (English + Chinese, async worker) ───────────
+// ─── Upload + OCR (English + Chinese, merged names) ───────────
 const upload = multer({ dest: "uploads/" });
 
 app.post("/upload", upload.single("image"), async (req, res) => {
@@ -110,25 +96,43 @@ app.post("/upload", upload.single("image"), async (req, res) => {
     uploadedImagePath = imagePath;
     console.log("🖼️ OCR received:", imagePath);
 
-    // Respond immediately so browser doesn't hang
+    // Respond immediately
     res.json({ status: "processing", imagePath: `/uploads/${path.basename(imagePath)}` });
 
-    // Perform OCR asynchronously and emit results to client
+    // Perform OCR asynchronously and emit results
     Tesseract.recognize(imagePath, "eng+chi_sim", {
       logger: (m) => console.log(m.status, m.progress),
     })
       .then((result) => {
-        // 🔹 Extract individual word boxes (names)
-        const boxes = result.data.words || [];
-        const detectedNames = boxes
-          .map((w) => w.text.trim())
-          .filter((w) => w.length > 0);
+        const raw = result.data.text || "";
 
-        global.lastDetectedNames = detectedNames;
+        // --- OCR cleanup & merging logic ---
+        const tokens = raw
+          .split(/\s+/)
+          .map((l) => l.trim())
+          .filter((l) => l.length > 0 && !/^[^A-Za-z0-9\u4e00-\u9fa5]+$/.test(l));
 
-        console.log("✅ OCR detected names:", detectedNames);
+        const merged = [];
+        let buffer = "";
+        for (const t of tokens) {
+          if (/^[\u4e00-\u9fa5A-Za-z0-9]+$/.test(t)) {
+            buffer += t;
+            if (/[a-z]/.test(t) || t.length > 1) {
+              merged.push(buffer);
+              buffer = "";
+            }
+          } else if (buffer) {
+            merged.push(buffer);
+            buffer = "";
+          }
+        }
+        if (buffer) merged.push(buffer);
+        // ------------------------------------
+
+        console.log("✅ OCR detected merged:", merged);
+
         io.emit("ocr-result", {
-          names: detectedNames,
+          names: merged,
           imagePath: `/uploads/${path.basename(imagePath)}`,
         });
       })
@@ -155,28 +159,15 @@ app.get("/push-discord", async (req, res) => {
     duration: Math.round((Date.now() - m.joinTime) / 1000),
   }));
 
-  // 🔹 Combine OCR names and active voice members
-  const ocrNames = global.lastDetectedNames || [];
-  const combinedList = ocrNames.map((ocrName) => {
-    const match = active.find(
-      (v) => v.name.toLowerCase() === ocrName.toLowerCase()
-    );
-    return {
-      imageName: ocrName,
-      discordName: match ? match.name : "-",
-      activeInDiscord: match ? "✅ Present" : "❌ Absent",
-      bossHunt: match ? "✅ Present" : "❌ Absent",
-    };
-  });
-
-  const combinedReport = combinedList
-    .map(
-      (c) =>
-        `${c.imageName} | ${c.discordName} | ${c.activeInDiscord} | ${c.bossHunt}`
-    )
+  const report = active
+    .map((m) => {
+      const minutes = Math.floor(m.duration / 60);
+      const seconds = m.duration % 60;
+      return `${m.name} — ${minutes}m ${seconds}s — ${boss} — Present ✅`;
+    })
     .join("\n");
 
-  const content = `🎯 **Boss Attendance Report**\n-----------------\n${combinedReport}`;
+  const content = `🎧 **Boss Attendance Report**\n**Boss:** ${boss}\n-----------------\n${report || "_No active members detected._"}`;
 
   const body = uploadedImagePath
     ? {
