@@ -1,61 +1,75 @@
 body {
+  font-family: "Segoe UI", sans-serif;
   background: #0d1117;
   color: #c9d1d9;
-  font-family: "Segoe UI", sans-serif;
   margin: 0;
-  padding: 0;
-}
-.dashboard {
   padding: 20px;
 }
-.grid {
+
+.container {
+  max-width: 1200px;
+  margin: auto;
+}
+
+h1 {
+  text-align: center;
+  color: #58a6ff;
+}
+
+.status {
+  background: #802121;
+  padding: 10px;
+  border-radius: 6px;
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.panel-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
   gap: 20px;
 }
+
 .panel {
   background: #161b22;
   padding: 15px;
-  border-radius: 12px;
-  box-shadow: 0 0 10px rgba(0,0,0,0.3);
+  border-radius: 10px;
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.4);
 }
-h1, h2 {
-  color: #58a6ff;
-}
-button, select, input[type=file] {
-  background: #238636;
-  border: none;
-  color: white;
-  padding: 6px 10px;
-  border-radius: 6px;
-  cursor: pointer;
-  margin-top: 5px;
-}
-button:hover {
-  background: #2ea043;
-}
+
 table {
   width: 100%;
   border-collapse: collapse;
   margin-top: 10px;
 }
+
 th, td {
-  padding: 6px;
-  text-align: left;
+  border: 1px solid #30363d;
+  padding: 8px;
+  text-align: center;
 }
-img {
-  max-width: 100%;
-  margin-top: 10px;
+
+button {
+  background: #238636;
+  border: none;
+  padding: 8px 12px;
   border-radius: 6px;
-}
-ul {
-  list-style: none;
-  padding: 0;
+  color: white;
+  cursor: pointer;
   margin-top: 10px;
 }
-ul li {
-  background: #21262d;
-  padding: 4px 8px;
-  margin-bottom: 4px;
-  border-radius: 4px;
+
+button:hover {
+  background: #2ea043;
+}
+
+#ocrResult, #preview {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 10px;
+  margin-top: 10px;
+  min-height: 80px;
+  overflow-y: auto;
+  font-size: 14px;
 }
