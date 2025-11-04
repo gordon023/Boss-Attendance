@@ -3,140 +3,127 @@ import http from "http";
 import { Server } from "socket.io";
 import cors from "cors";
 import fs from "fs-extra";
-import multer from "multer";
 import dotenv from "dotenv";
+import multer from "multer";
+import Tesseract from "tesseract.js";
 import { Client, GatewayIntentBits } from "discord.js";
 import fetch from "node-fetch";
-import Tesseract from "tesseract.js";
 
 dotenv.config();
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
+
 app.use(cors());
 app.use(express.static("public"));
+app.use(express.json());
 
-const upload = multer({ dest: "uploads/" });
 const DATA_FILE = "./data/attendance.json";
-
 await fs.ensureFile(DATA_FILE);
 if (!(await fs.readFile(DATA_FILE, "utf8"))) await fs.writeFile(DATA_FILE, "[]");
 
+let voiceMembers = new Map();
 let pastAttendance = [];
-let activeVoice = new Map();
-let lastUploadedImage = null;
-let detectedNames = [];
 
-// Load saved data
-fs.readJson(DATA_FILE)
-  .then(data => (pastAttendance = data))
-  .catch(() => (pastAttendance = []));
+try {
+  pastAttendance = await fs.readJson(DATA_FILE);
+} catch {
+  pastAttendance = [];
+}
 
-// Discord client
+// --- Discord Bot ---
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
 });
 
-client.once("ready", async () => {
+client.once("clientReady", () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
-
-  const guild = await client.guilds.fetch(process.env.DISCORD_GUILD_ID);
-  const channel = await guild.channels.fetch(process.env.DISCORD_VOICE_CHANNEL_ID);
-  if (channel && channel.members) {
-    channel.members.forEach(member => {
-      const name = member.displayName || member.user.username;
-      activeVoice.set(member.id, { id: member.id, name, joinTime: Date.now() });
-    });
-  }
-
-  sendUpdate();
+  io.emit("bot-status", { connected: true, name: client.user.tag });
 });
 
-client.on("voiceStateUpdate", (oldState, newState) => {
+// Track voice activity
+client.on("voiceStateUpdate", async (oldState, newState) => {
   const channelId = process.env.DISCORD_VOICE_CHANNEL_ID;
 
-  // joined
   if (newState.channelId === channelId && oldState.channelId !== channelId) {
-    const member = newState.member;
-    const nickname = member.displayName || member.user.username;
-    activeVoice.set(newState.id, { id: newState.id, name: nickname, joinTime: Date.now() });
+    const nickname = newState.member.displayName || newState.member.user.username;
+    voiceMembers.set(newState.id, { id: newState.id, name: nickname, joinTime: Date.now() });
   }
 
-  // left
   if (oldState.channelId === channelId && newState.channelId !== channelId) {
-    const member = activeVoice.get(oldState.id);
+    const member = voiceMembers.get(oldState.id);
     if (member) {
       member.leaveTime = Date.now();
       member.duration = Math.round((member.leaveTime - member.joinTime) / 1000);
       pastAttendance.push(member);
-      activeVoice.delete(oldState.id);
-      fs.writeJson(DATA_FILE, pastAttendance);
+      voiceMembers.delete(oldState.id);
+      await fs.writeJson(DATA_FILE, pastAttendance);
     }
   }
 
   sendUpdate();
 });
 
+// Send updates to dashboard
 function sendUpdate() {
-  const active = Array.from(activeVoice.values()).map(m => ({
+  const active = Array.from(voiceMembers.values()).map((m) => ({
     ...m,
     duration: Math.round((Date.now() - m.joinTime) / 1000),
   }));
-  io.emit("update-attendance", { active, past: pastAttendance.slice(-30), image: lastUploadedImage, detected: detectedNames });
+
+  io.emit("update-attendance", { active, past: pastAttendance.slice(-20) });
 }
 
+// --- OCR Image Upload ---
+const upload = multer({ dest: "uploads/" });
+
 app.post("/upload", upload.single("image"), async (req, res) => {
-  const file = req.file;
-  if (!file) return res.status(400).send("No image");
+  if (!req.file) return res.status(400).send("No image uploaded");
 
-  lastUploadedImage = `/uploads/${file.filename}`;
-  detectedNames = [];
+  try {
+    const { data } = await Tesseract.recognize(req.file.path, "eng");
+    const lines = data.text
+      .split("\n")
+      .map((t) => t.trim())
+      .filter(Boolean);
 
-  // OCR
-  const { data } = await Tesseract.recognize(file.path, "eng");
-  const lines = data.text.split("\n").map(l => l.trim()).filter(l => l);
-  detectedNames = lines;
-
-  sendUpdate();
-  res.json({ success: true, image: lastUploadedImage, names: detectedNames });
+    res.json({ names: lines });
+    fs.unlink(req.file.path); // cleanup temp file
+  } catch (err) {
+    console.error("OCR Error:", err);
+    res.status(500).send("OCR failed");
+  }
 });
 
+// --- Push Attendance to Discord ---
 app.get("/push-discord", async (req, res) => {
   const webhook = process.env.DISCORD_WEBHOOK_URL;
   const boss = req.query.boss || "Unknown Boss";
 
-  const active = Array.from(activeVoice.values()).map(m => ({
-    ...m,
-    duration: Math.round((Date.now() - m.joinTime) / 1000),
-  }));
+  const activeList = Array.from(voiceMembers.values()).map((m) => {
+    const minutes = Math.floor((Date.now() - m.joinTime) / 60000);
+    const seconds = Math.floor(((Date.now() - m.joinTime) % 60000) / 1000);
+    return `${m.name} — ${minutes}m ${seconds}s — ${boss} — Present`;
+  });
 
-  const report = active.map(m => {
-    const minutes = Math.floor(m.duration / 60);
-    const seconds = m.duration % 60;
-    const present = detectedNames.includes(m.name) ? "Present" : "Absent";
-    return `${m.name} — ${minutes}m ${seconds}s — ${boss} — ${present}`;
-  }).join("\n");
+  const report =
+    activeList.length > 0
+      ? activeList.join("\n")
+      : "_No active members currently in VC._";
 
   const message = {
-    content: `🎧 **Boss Attendance Report**\n**Boss:** ${boss}\n-----------------\n${report || "_No active members._"}`,
+    content: `🎧 **Boss Attendance Report**\n**Boss:** ${boss}\n-----------------\n${report}`,
   };
 
-  const webhookData = new FormData();
-  webhookData.append("payload_json", JSON.stringify(message));
+  await fetch(webhook, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(message),
+  });
 
-  if (lastUploadedImage) {
-    const fileData = await fs.readFile(`.${lastUploadedImage}`);
-    webhookData.append("file", fileData, "attendance.png");
-  }
-
-  await fetch(webhook, { method: "POST", body: webhookData });
-
-  await fs.writeJson(DATA_FILE, pastAttendance);
   res.send("ok");
 });
-
-app.use("/uploads", express.static("uploads"));
 
 client.login(process.env.DISCORD_BOT_TOKEN);
 
