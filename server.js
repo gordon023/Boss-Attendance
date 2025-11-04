@@ -111,10 +111,11 @@ app.get("/push-discord", async (req, res) => {
     body: JSON.stringify(message),
   });
 
-  // keep data saved for persistence
+  // Keep data saved for persistence
   await fs.writeJson(DATA_FILE, pastAttendance);
   res.send("ok");
 });
+
 
 client.login(process.env.DISCORD_BOT_TOKEN);
 
