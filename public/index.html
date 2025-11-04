@@ -1,75 +1,54 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Attendance — Voice Tracker</title>
-  <link rel="stylesheet" href="style.css" />
-</head>
-<body>
-  <div class="wrap">
-    <h1>🎧 Voice Attendance Dashboard</h1>
-    <div id="bot-status" class="status">🔴 Bot Disconnected</div>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>🎧 Discord Voice Attendance Tracker</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <h1>🎧 Discord Voice Attendance Tracker</h1>
+      <div id="bot-status" class="status">🔴 Bot Disconnected</div>
 
-    <div class="panel-row">
-      <!-- Panel 1: Active VC -->
-      <section class="panel" id="panel-active">
-        <h2>Active Voice Channel</h2>
-        <label for="bossSelectTop">Boss:</label>
-        <select id="bossSelectTop" class="boss-select">
-          <option>Venatus</option>
-          <option>Livera</option>
-          <option>Darkon</option>
-          <option>Karion</option>
-        </select>
-
-        <table id="activeTable">
-          <thead><tr><th>Nickname</th><th>Active</th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </section>
-
-      <!-- Panel 2: Upload & OCR -->
-      <section class="panel" id="panel-upload">
-        <h2>Upload Attendance Image</h2>
-        <input id="imageInput" type="file" accept="image/*" />
-        <button id="uploadBtn">Upload + OCR (ENG + CHI)</button>
-
-        <div class="upload-area">
-          <div class="preview-area">
-            <img id="previewImage" src="" alt="" />
-          </div>
-          <div class="detected-area">
-            <h3>Detected Names (vertical)</h3>
-            <ul id="detectedList"></ul>
-          </div>
-        </div>
-
-        <h3>Combined (OCR vs Voice)</h3>
-        <table id="combineTable">
-          <thead><tr><th>OCR Name</th><th>Voice Nickname</th><th>Match</th></tr></thead>
-          <tbody></tbody>
-        </table>
-
-        <button id="transferList">Transfer List → Preview</button>
-      </section>
-
-      <!-- Panel 3: Preview & Push -->
-      <section class="panel" id="panel-preview">
-        <h2>Push Preview</h2>
-        <div id="previewContainer">
-          <div id="previewImageBox"></div>
-          <table id="previewTable">
-            <thead><tr><th>Nickname</th><th>Duration</th><th>Boss</th><th>Status</th></tr></thead>
+      <div class="panel-grid">
+        <!-- ───── Panel 1 ───── -->
+        <div class="panel">
+          <h2>🟢 Active Voice Chat</h2>
+          <table id="activeTable">
+            <thead>
+              <tr><th>Member</th><th>Time Active</th></tr>
+            </thead>
             <tbody></tbody>
           </table>
         </div>
-        <button id="pushDiscord">Push to Discord</button>
-      </section>
-    </div>
-  </div>
 
-  <script src="/socket.io/socket.io.min.js"></script>
-  <script src="script.js"></script>
-</body>
+        <!-- ───── Panel 2 ───── -->
+        <div class="panel">
+          <h2>🖼️ Upload Attendance Image</h2>
+          <input type="file" id="imageInput" accept="image/*" />
+          <button id="uploadBtn">Upload + OCR</button>
+          <div id="ocrResult" class="ocr-result"></div>
+
+          <label for="bossSelect">Boss:</label>
+          <select id="bossSelect">
+            <option>World Boss</option>
+            <option>Guild Boss</option>
+            <option>Event Boss</option>
+          </select>
+          <button id="transferList">Transfer List ➜</button>
+        </div>
+
+        <!-- ───── Panel 3 ───── -->
+        <div class="panel">
+          <h2>📤 Push Attendance to Discord</h2>
+          <div id="preview" class="preview-box"></div>
+          <button id="pushDiscord">Push to Discord</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="script.js"></script>
+  </body>
 </html>
