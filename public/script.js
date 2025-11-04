@@ -23,6 +23,7 @@ socket.on("update-attendance", (data) => {
 });
 
 document.getElementById("pushDiscord").onclick = async () => {
-  await fetch("/push-discord");
-  alert("✅ Attendance pushed to Discord!");
+  const boss = document.getElementById("bossSelect").value;
+  await fetch(`/push-discord?boss=${encodeURIComponent(boss)}`);
+  alert(`✅ Attendance for ${boss} pushed to Discord!`);
 };
