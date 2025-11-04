@@ -6,6 +6,8 @@ import fs from "fs-extra";
 import dotenv from "dotenv";
 import { Client, GatewayIntentBits } from "discord.js";
 import fetch from "node-fetch";
+pastAttendance = await fs.readJson(DATA_FILE).catch(() => []);
+
 
 dotenv.config();
 
