@@ -7,8 +7,6 @@ import dotenv from "dotenv";
 import { Client, GatewayIntentBits } from "discord.js";
 import fetch from "node-fetch";
 
-
-
 dotenv.config();
 
 const app = express();
@@ -27,13 +25,23 @@ const client = new Client({
 });
 
 let voiceMembers = new Map(); // store { id, name, joinTime }
-let pastAttendance = [];
+let pastAttendance = []; // Declare once only ✅
+
+// Load saved attendance data
+fs.readJson(DATA_FILE)
+  .then((data) => {
+    pastAttendance = data;
+    console.log("✅ Loaded saved attendance data.");
+  })
+  .catch(() => {
+    pastAttendance = [];
+    console.log("⚠️ No existing attendance data found, starting fresh.");
+  });
 
 client.once("clientReady", () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   io.emit("bot-status", { connected: true, name: client.user.tag });
 });
-
 
 client.on("voiceStateUpdate", (oldState, newState) => {
   const channelId = process.env.DISCORD_VOICE_CHANNEL_ID;
@@ -78,14 +86,19 @@ app.get("/push-discord", async (req, res) => {
   const webhook = process.env.DISCORD_WEBHOOK_URL;
   const boss = req.query.boss || "Unknown Boss";
 
-  const report = pastAttendance.slice(-20).map((m) => {
-    const minutes = Math.floor(m.duration / 60);
-    const seconds = m.duration % 60;
-    return `${m.name} — ${minutes}m ${seconds}s — ${boss} — Present`;
-  }).join("\n");
+  const report = pastAttendance
+    .slice(-20)
+    .map((m) => {
+      const minutes = Math.floor(m.duration / 60);
+      const seconds = m.duration % 60;
+      return `${m.name} — ${minutes}m ${seconds}s — ${boss} — Present`;
+    })
+    .join("\n");
 
   const message = {
-    content: `🎧 **Boss Attendance Report**\n**Boss:** ${boss}\n-----------------\n${report || "_No attendance recorded yet._"}`,
+    content: `🎧 **Boss Attendance Report**\n**Boss:** ${boss}\n-----------------\n${
+      report || "_No attendance recorded yet._"
+    }`,
   };
 
   await fetch(webhook, {
@@ -98,21 +111,10 @@ app.get("/push-discord", async (req, res) => {
   await fs.writeJson(DATA_FILE, pastAttendance);
   res.send("ok");
 });
-// Initialize attendance storage
-let pastAttendance = [];
-fs.readJson(DATA_FILE)
-  .then(data => {
-    pastAttendance = data;
-    console.log("✅ Loaded saved attendance data.");
-  })
-  .catch(() => {
-    pastAttendance = [];
-    console.log("⚠️ No existing attendance data found, starting fresh.");
-  });
-
 
 client.login(process.env.DISCORD_BOT_TOKEN);
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`🌐 Server running on port ${PORT}`));
-
+server.listen(PORT, () =>
+  console.log(`🌐 Server running on port ${PORT}`)
+);
