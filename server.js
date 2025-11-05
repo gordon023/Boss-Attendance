@@ -32,7 +32,7 @@ const REGISTERED_NAMES = [
   "Aerokhart神","dShadow2","Tatangers","Pharit4","HHERMESS","Aluky","Daisukiii",
   "Zinoky","Inoyi","Fiekor","RhianEunice","Traelinastra","Jomz","Disturbed",
   "ArcherQueen","CCO","DivineAura","君主Axel","KenRich","Tikoy","Thalechoe",
-  "SoulChillin","CROZZBOW","Bellanoir","Krii"
+  "SoulChillin","CROZZBOW","Bellanoir","Krii","yGG"
 ];
 
 // ─── Discord Bot ────────────────────────────────
@@ -133,11 +133,20 @@ app.post("/upload", upload.single("image"), async (req, res) => {
       logger: (m) => console.log(m.status, m.progress),
     })
       .then((result) => {
-        // 🔹 Extract individual word boxes (names)
+        // 🔹 Extract boxes and clean text properly (per box detection)
         const boxes = result.data.words || [];
         const detectedNames = boxes
           .map((w) => w.text.trim())
-          .filter((w) => w.length > 0);
+          .filter((text) => {
+            // remove random symbols / single junk
+            if (!text) return false;
+            if (/^[a-zA-Z]$/.test(text)) return false; // single english letter
+            if (/^[\u4e00-\u9fa5]$/.test(text)) return false; // single chinese char
+            if (/^[^a-zA-Z0-9\u4e00-\u9fa5]+$/.test(text)) return false; // pure symbols
+            return true;
+          })
+          .map((text) => text.replace(/['"]/g, "")) // remove stray quotes
+          .filter((t) => t.length > 1);
 
         // 🔹 Compare detected names with registered list
         const matched = REGISTERED_NAMES.map((name) => ({
@@ -150,7 +159,7 @@ app.post("/upload", upload.single("image"), async (req, res) => {
         }));
 
         global.lastDetectedNames = detectedNames;
-        global.lastMatchedNames = matched; // save for attendance panel 3
+        global.lastMatchedNames = matched;
 
         console.log("✅ OCR detected names:", detectedNames);
         console.log("📋 Matched list:", matched);
