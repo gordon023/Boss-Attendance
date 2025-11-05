@@ -25,6 +25,16 @@ const DATA_FILE = "./data/attendance.json";
 await fs.ensureDir(path.dirname(DATA_FILE));
 if (!(await fs.pathExists(DATA_FILE))) await fs.writeJson(DATA_FILE, []);
 
+// ─── Registered Player Names ─────────────────────────────
+const REGISTERED_NAMES = [
+  "轻云","Jinshi","清源","pagog0mac","mecmec","TOUAREG","Yuisha","上帝之手",
+  "Zhreytis","Own","LolaKerps","Cathaleah","Crysz","Rintaro","ForgeArt","XCKEL",
+  "Aerokhart神","dShadow2","Tatangers","Pharit4","HHERMESS","Aluky","Daisukiii",
+  "Zinoky","Inoyi","Fiekor","RhianEunice","Traelinastra","Jomz","Disturbed",
+  "ArcherQueen","CCO","DivineAura","君主Axel","KenRich","Tikoy","Thalechoe",
+  "SoulChillin","CROZZBOW","Bellanoir","Krii"
+];
+
 // ─── Discord Bot ────────────────────────────────
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
@@ -98,6 +108,7 @@ io.on("connection", (socket) => {
   if (uploadedImagePath) {
     socket.emit("ocr-result", {
       names: global.lastDetectedNames,
+      matched: global.lastMatchedNames || [],
       imagePath: `/uploads/${path.basename(uploadedImagePath)}`,
     });
   }
@@ -128,11 +139,25 @@ app.post("/upload", upload.single("image"), async (req, res) => {
           .map((w) => w.text.trim())
           .filter((w) => w.length > 0);
 
+        // 🔹 Compare detected names with registered list
+        const matched = REGISTERED_NAMES.map((name) => ({
+          name,
+          detected: detectedNames.some(
+            (det) => det.toLowerCase() === name.toLowerCase()
+          )
+            ? "✅ Present"
+            : "❌ Absent",
+        }));
+
         global.lastDetectedNames = detectedNames;
+        global.lastMatchedNames = matched; // save for attendance panel 3
 
         console.log("✅ OCR detected names:", detectedNames);
+        console.log("📋 Matched list:", matched);
+
         io.emit("ocr-result", {
           names: detectedNames,
+          matched,
           imagePath: `/uploads/${path.basename(imagePath)}`,
         });
       })
